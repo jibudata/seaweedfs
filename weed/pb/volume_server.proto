@@ -431,7 +431,7 @@ message MemStatus {
     uint64 stack = 7;
 }
 
-// tired storage on volume servers
+// tiered storage on volume servers
 message RemoteFile {
     string backend_type = 1;
     string backend_id = 2;
