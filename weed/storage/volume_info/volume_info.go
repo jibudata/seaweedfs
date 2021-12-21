@@ -10,6 +10,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	_ "github.com/chrislusf/seaweedfs/weed/storage/backend/s3_backend"
+	_ "github.com/chrislusf/seaweedfs/weed/storage/backend/ltfsdm_fuse"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 

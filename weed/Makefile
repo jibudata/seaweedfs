@@ -2,9 +2,12 @@ BINARY = weed
 
 SOURCE_DIR = .
 
-all: install
+all: build
 
 .PHONY : clean debug_mount
+
+build:
+	go build -v -gcflags="all=-N -l" -o bin/weed
 
 install:
 	go install
