@@ -44,12 +44,14 @@ type FuseBackendStorage struct {
 }
 
 func newFuseBackendStorage(conf backend.StringProperties, configPrefix string, id string) (s *FuseBackendStorage, err error) {
-    glog.V(0).Infof("create ltfsdm fuse backend storage,id: ltfsdm.%s, prefix %s", id, configPrefix)
 
-    return &FuseBackendStorage{
+    f := &FuseBackendStorage{
         id:     id,
-        rootFs: conf.GetString("root_path"),
-    }, nil
+        rootFs: conf.GetString(configPrefix + "root_path"),
+    }
+    glog.V(0).Infof("create ltfsdm fuse backend storage,id: ltfsdm.%s, root path: %s", id, f.rootFs)
+
+    return f, nil
 }
 
 // FuseBackendStorage Implement BackendStorage interface
@@ -81,7 +83,9 @@ func (s *FuseBackendStorage) CopyFile(f *os.File, fn func(progressed int64, perc
     // New file in fuse mount point
     destFilename := s.rootFs + "/" + path.Base(f.Name())
     destFile, err := os.Create(destFilename)
+    glog.V(0).Infof("create dest file: %s", destFilename)
 	if err != nil {
+        glog.V(0).Infof("create dest file failed: %s", destFilename)
 		return key, 0, fmt.Errorf("failed to create desination file %q, %v", destFilename, err)
 	}
     defer destFile.Close()

@@ -73,6 +73,7 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	}
 
 	vid := needle.VolumeId(*volumeId)
+    fmt.Printf("upload vid: %v, volume: %s, dest: %s, collection: %s\n", vid, volumeId, dest, collection)
 
 	// volumeId is provided
 	if vid != 0 {

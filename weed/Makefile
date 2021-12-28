@@ -10,7 +10,9 @@ build:
 	go build -v -gcflags="all=-N -l" -o bin/weed
 
 install:
-	go install
+	#go install
+	cp -f bin/weed /usr/local/bin/
+	scp bin/weed root@freemen:/usr/local/bin/
 
 clean:
 	go clean $(SOURCE_DIR)
