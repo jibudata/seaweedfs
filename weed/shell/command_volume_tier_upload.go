@@ -73,7 +73,6 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	}
 
 	vid := needle.VolumeId(*volumeId)
-    fmt.Printf("upload vid: %v, volume: %s, dest: %s, collection: %s\n", vid, volumeId, dest, collection)
 
 	// volumeId is provided
 	if vid != 0 {
@@ -103,6 +102,7 @@ func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection str
 		return fmt.Errorf("volume %d not found", vid)
 	}
 
+    fmt.Printf("volume locations: %v\n", locations)
 	err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, needle.VolumeId(vid), locations, false)
 	if err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)

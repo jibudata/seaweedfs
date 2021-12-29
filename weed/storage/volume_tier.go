@@ -49,7 +49,7 @@ func (v *Volume) LoadRemoteFile() error {
 		v.DataBackend.Close()
 	}
 
-	v.DataBackend = backendStorage.NewStorageFile(tierFile.Key, v.volumeInfo)
+	v.DataBackend = backendStorage.NewStorageFile(v.DataFileName(), tierFile.Key, v.volumeInfo)
 	return nil
 }
 

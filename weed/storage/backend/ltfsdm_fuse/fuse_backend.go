@@ -61,10 +61,20 @@ func (s *FuseBackendStorage) ToProperties() map[string]string {
     return m
 }
 
-func (s *FuseBackendStorage) NewStorageFile(key string, tierInfo *volume_server_pb.VolumeInfo) backend.BackendStorageFile {
+func (s *FuseBackendStorage) NewStorageFile(volFileName, key string, tierInfo *volume_server_pb.VolumeInfo) backend.BackendStorageFile {
+    // Open file from fuse mount point
+    destFilename := s.rootFs + "/" + path.Base(volFileName) + ".dat"
+    destFile, err := os.Open(destFilename)
+
+	if err != nil {
+		return nil
+	}
+
     return &FuseBackendStorageFile{
-        backend:  s,
-        tierInfo: tierInfo,
+        volDataFile: volFileName,
+        destFile:    destFile,
+        backend:     s,
+        tierInfo:    tierInfo,
     }
 }
 
@@ -90,7 +100,7 @@ func (s *FuseBackendStorage) CopyFile(f *os.File, fn func(progressed int64, perc
 	}
     defer destFile.Close()
 
-    glog.V(1).Infof("destination file name in fuse: %s", destFilename)
+    glog.V(0).Infof("destination file name in fuse: %s", destFilename)
 
     // Read from original volume and write to new file
     var totalWritten int64
@@ -121,16 +131,24 @@ func (s *FuseBackendStorage) CopyFile(f *os.File, fn func(progressed int64, perc
         }
         totalWritten += int64(bytesread)
 
+        // Progress function
+        if fn != nil {
+            if err := fn(totalWritten, float32(totalWritten*100)/float32(fileSize)); err != nil {
+                return key, totalWritten, err
+            }
+        }
+
         if totalWritten == fileSize {
             break
         }
     }
 
+    glog.V(0).Infof("upload complete: %s", destFilename)
     return key, totalWritten, nil
 }
 
 func (s *FuseBackendStorage) DownloadFile(fileName, key string, fn func(progressed int64, percentage float32) error) (size int64, err error) {
-	glog.V(1).Infof("copying dat file of from fuse ltfsdm.%s as volume %s", s.id, fileName)
+	glog.V(0).Infof("copying dat file of from fuse ltfsdm.%s as volume %s", s.id, fileName)
 
     // Source file in fuse mount point
     srcFilename := s.rootFs + "/" + path.Base(fileName)
@@ -169,7 +187,7 @@ func (s *FuseBackendStorage) DownloadFile(fileName, key string, fn func(progress
 
     for {
         if totalWritten == 0 {
-            glog.V(1).Infof("first time reading from ltfsdm.%s file %s may take few mins", s.id, fileName)
+            glog.V(0).Infof("first time reading from ltfsdm.%s file %s may take few mins", s.id, fileName)
         }
 
         bytesread, err := rbuf.Read(buffer)
@@ -186,11 +204,19 @@ func (s *FuseBackendStorage) DownloadFile(fileName, key string, fn func(progress
         }
         totalWritten += int64(bytesread)
 
+        // Progress function
+        if fn != nil {
+            if err := fn(totalWritten, float32(totalWritten*100)/float32(fileSize)); err != nil {
+                return totalWritten, err
+            }
+        }
+
         if totalWritten == fileSize {
             break
         }
     }
 
+    glog.V(0).Infof("download complete: %s", srcFilename)
     return totalWritten, nil
 }
 
@@ -200,18 +226,16 @@ func (s *FuseBackendStorage) DeleteFile(key string) (err error) {
 
 // Implement BackendStorageFile interface
 type FuseBackendStorageFile struct {
-    backend *FuseBackendStorage
-    tierInfo *volume_server_pb.VolumeInfo
+    volDataFile string
+    destFile    *os.File
+    backend     *FuseBackendStorage
+    tierInfo    *volume_server_pb.VolumeInfo
 }
 
 func (f FuseBackendStorageFile) ReadAt(p []byte, off int64) (n int, err error) {
-    // New file in fuse mount point
-    destFilename := f.backend.rootFs + "/" + path.Base(f.Name())
-    destFile, err := os.Open(destFilename)
-	if err != nil {
-		return 0, fmt.Errorf("failed to open desination file %q, %v", destFilename, err)
-	}
-    n, err = destFile.ReadAt(p, off)
+
+    n, err = f.destFile.ReadAt(p, off)
+    glog.V(0).Infof("readat, off: %d, size: %d", off, n)
     return
 }
 
@@ -224,6 +248,8 @@ func (f FuseBackendStorageFile) Truncate(off int64) error {
 }
 
 func (f FuseBackendStorageFile) Close() error {
+    glog.V(0).Infof("close fuse backend file: %s", f.volDataFile)
+    f.destFile.Close()
 	return nil
 }
 
@@ -243,7 +269,8 @@ func (f FuseBackendStorageFile) GetStat() (datSize int64, modTime time.Time, err
 }
 
 func (f FuseBackendStorageFile) Name() string {
-	return f.backend.id
+    destFilename := f.backend.rootFs + "/" + path.Base(f.volDataFile) + ".dat"
+	return destFilename
 }
 
 func (f FuseBackendStorageFile) Sync() error {

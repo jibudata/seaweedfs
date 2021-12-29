@@ -65,7 +65,7 @@ func (s *S3BackendStorage) ToProperties() map[string]string {
 	return m
 }
 
-func (s *S3BackendStorage) NewStorageFile(key string, tierInfo *volume_server_pb.VolumeInfo) backend.BackendStorageFile {
+func (s *S3BackendStorage) NewStorageFile(volFileName, key string, tierInfo *volume_server_pb.VolumeInfo) backend.BackendStorageFile {
 	if strings.HasPrefix(key, "/") {
 		key = key[1:]
 	}
