@@ -4,9 +4,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"google.golang.org/grpc"
 
@@ -29,8 +30,8 @@ func (c *commandVolumeTierUpload) Name() string {
 func (c *commandVolumeTierUpload) Help() string {
 	return `upload the dat file of a volume to a remote tier
 
-	volume.tier.upload [-collection=""] [-fullPercent=95] [-quietFor=1h]
-	volume.tier.upload [-collection=""] -volumeId=<volume_id> -dest=<storage_backend> [-keepLocalDatFile]
+	volume.tier.upload [-collection=""] [-fullPercent=95] [-quietFor=1h] [-allReplicas]
+	volume.tier.upload [-collection=""] -volumeId=<volume_id> -dest=<storage_backend> [-keepLocalDatFile] [-allReplicas]
 
 	e.g.:
 	volume.tier.upload -volumeId=7 -dest=s3
@@ -64,6 +65,7 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	quietPeriod := tierCommand.Duration("quietFor", 24*time.Hour, "select volumes without no writes for this period")
 	dest := tierCommand.String("dest", "", "the target tier name")
 	keepLocalDatFile := tierCommand.Bool("keepLocalDatFile", false, "whether keep local dat file")
+	uploadAllCopies := tierCommand.Bool("allReplicas", false, "whether upload all volume replicas")
 	if err = tierCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -76,7 +78,7 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 
 	// volumeId is provided
 	if vid != 0 {
-		return doVolumeTierUpload(commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile)
+		return doVolumeTierUpload(commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile, *uploadAllCopies)
 	}
 
 	// apply to all volumes in the collection
@@ -87,7 +89,7 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	}
 	fmt.Printf("tier upload volumes: %v\n", volumeIds)
 	for _, vid := range volumeIds {
-		if err = doVolumeTierUpload(commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile); err != nil {
+		if err = doVolumeTierUpload(commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile, *uploadAllCopies); err != nil {
 			return err
 		}
 	}
@@ -95,7 +97,7 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	return nil
 }
 
-func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection string, vid needle.VolumeId, dest string, keepLocalDatFile bool) (err error) {
+func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection string, vid needle.VolumeId, dest string, keepLocalDatFile, uploadAllCopies bool) (err error) {
 	// find volume location
 	existingLocations, found := commandEnv.MasterClient.GetLocationsClone(uint32(vid))
 	if !found {
@@ -111,6 +113,22 @@ func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection str
 	err = uploadDatToRemoteTier(commandEnv.option.GrpcDialOption, writer, vid, collection, existingLocations[0].ServerAddress(), dest, keepLocalDatFile)
 	if err != nil {
 		return fmt.Errorf("copy dat file for volume %d on %s to %s: %v", vid, existingLocations[0].Url, dest, err)
+	}
+
+	if uploadAllCopies {
+		for _, loc := range existingLocations {
+			// Copy all replicas
+			fmt.Printf("upload volume on location: %v\n", loc)
+			err = uploadDatToRemoteTier(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, loc.ServerAddress(), dest, keepLocalDatFile)
+			if err != nil {
+				return fmt.Errorf("copy dat file for volume %d on %s to %s: %v", vid, existingLocations[0].Url, dest, err)
+			}
+		}
+	} else {
+		err = uploadDatToRemoteTier(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, existingLocations[0].ServerAddress(), dest, keepLocalDatFile)
+		if err != nil {
+			return fmt.Errorf("copy dat file for volume %d on %s to %s: %v", vid, existingLocations[0].Url, dest, err)
+		}
 	}
 
 	// now the first replica has the .idx and .vif files.
