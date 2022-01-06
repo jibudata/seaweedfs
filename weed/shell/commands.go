@@ -3,13 +3,14 @@ package shell
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/operation"
-	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
-	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"io"
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 
 	"google.golang.org/grpc"
 
@@ -91,6 +92,10 @@ func (ce *CommandEnv) isLocked() bool {
 		return true
 	}
 	return ce.locker.IsLocked()
+}
+
+func (ce *CommandEnv) GetOptions() *ShellOptions {
+	return ce.option
 }
 
 func (ce *CommandEnv) checkDirectory(path string) error {
