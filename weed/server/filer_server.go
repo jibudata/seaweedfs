@@ -71,6 +71,7 @@ type FilerServer struct {
 	option         *FilerOption
 	secret         security.SigningKey
 	filer          *filer.Filer
+	filerGuard     *security.Guard
 	grpcDialOption grpc.DialOption
 
 	// metrics read from the master
@@ -81,6 +82,10 @@ type FilerServer struct {
 	listenersLock sync.Mutex
 	listenersCond *sync.Cond
 
+	// track known metadata listeners
+	knownListenersLock sync.Mutex
+	knownListeners     map[int32]struct{}
+
 	brokers     map[string]map[string]bool
 	brokersLock sync.Mutex
 
@@ -90,9 +95,19 @@ type FilerServer struct {
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
 
+	v := util.GetViper()
+	signingKey := v.GetString("jwt.filer_signing.key")
+	v.SetDefault("jwt.filer_signing.expires_after_seconds", 10)
+	expiresAfterSec := v.GetInt("jwt.filer_signing.expires_after_seconds")
+
+	readSigningKey := v.GetString("jwt.filer_signing.read.key")
+	v.SetDefault("jwt.filer_signing.read.expires_after_seconds", 60)
+	readExpiresAfterSec := v.GetInt("jwt.filer_signing.read.expires_after_seconds")
+
 	fs = &FilerServer{
 		option:                option,
 		grpcDialOption:        security.LoadClientTLS(util.GetViper(), "grpc.filer"),
+		knownListeners:        make(map[int32]struct{}),
 		brokers:               make(map[string]map[string]bool),
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
 	}
@@ -106,13 +121,14 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		fs.listenersCond.Broadcast()
 	})
 	fs.filer.Cipher = option.Cipher
+	// we do not support IP whitelist right now
+	fs.filerGuard = security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	fs.checkWithMaster()
 
 	go stats.LoopPushingMetric("filer", string(fs.option.Host), fs.metricsAddress, fs.metricsIntervalSec)
 	go fs.filer.KeepMasterClientConnected()
 
-	v := util.GetViper()
 	if !util.LoadConfiguration("filer", false) {
 		v.Set("leveldb2.enabled", true)
 		v.Set("leveldb2.dir", option.DefaultLevelDbDir)
