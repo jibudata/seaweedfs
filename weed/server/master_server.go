@@ -1,7 +1,9 @@
 package weed_server
 
 import (
+	"context"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -152,7 +154,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers []pb.ServerAddre
 	ms.ProcessGrowRequest()
 
 	if !option.IsFollower {
-		ms.startAdminScripts()
+		ms.startAdminScriptsThread()
 	}
 
 	return ms
@@ -207,21 +209,42 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (ms *MasterServer) startAdminScripts() {
+func (ms *MasterServer) startAdminScriptsThread() {
+	v := util.GetViper()
+	adminScripts := v.GetString("master.maintenance.scripts")
+	if adminScripts == "" {
+		return
+	}
+	glog.V(0).Infof("start adminScripts thread")
+
+	v.SetDefault("master.maintenance.sleep_minutes", 17)
+	sleepMinutes := v.GetInt("master.maintenance.sleep_minutes")
+	glog.V(0).Infof("sleep mintues: %d", sleepMinutes)
+
+	go func() {
+		for {
+			time.Sleep(time.Duration(sleepMinutes) * time.Minute)
+			if ms.Topo.IsLeader() {
+				ms.execAdminScripts()
+			}
+		}
+	}()
+}
+
+func (ms *MasterServer) execAdminScripts() {
 	var err error
 
 	v := util.GetViper()
+	util.LoadConfiguration("master", false)
 	adminScripts := v.GetString("master.maintenance.scripts")
 	if adminScripts == "" {
 		return
 	}
 	glog.V(0).Infof("adminScripts: %v", adminScripts)
 
-	v.SetDefault("master.maintenance.sleep_minutes", 17)
-	sleepMinutes := v.GetInt("master.maintenance.sleep_minutes")
-
 	v.SetDefault("master.filer.default", "localhost:8888")
 	filerHostPort := v.GetString("master.filer.default")
+	glog.V(0).Infof("get master.filer.default = %s\n", filerHostPort)
 
 	scriptLines := strings.Split(adminScripts, "\n")
 	if !strings.Contains(adminScripts, "lock") {
@@ -230,12 +253,12 @@ func (ms *MasterServer) startAdminScripts() {
 	}
 
 	masterAddress := string(ms.option.Master)
+	glog.V(0).Infof("master address = %s\n", ms.option.Master, masterAddress)
 
 	var shellOptions shell.ShellOptions
 	shellOptions.GrpcDialOption = security.LoadClientTLS(v, "grpc.master")
 	shellOptions.Masters = &masterAddress
 
-	shellOptions.FilerAddress = pb.ServerAddress(filerHostPort)
 	shellOptions.Directory = "/"
 	if err != nil {
 		glog.V(0).Infof("failed to parse master.filer.default = %s : %v\n", filerHostPort, err)
@@ -244,24 +267,37 @@ func (ms *MasterServer) startAdminScripts() {
 
 	commandEnv := shell.NewCommandEnv(shellOptions)
 
+	go commandEnv.MasterClient.KeepConnectedToMaster()
+	commandEnv.MasterClient.WaitUntilConnected()
+
+	if commandEnv.GetOptions().FilerAddress == "" {
+		var filers []pb.ServerAddress
+		commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+			resp, err := client.ListClusterNodes(context.Background(), &master_pb.ListClusterNodesRequest{
+				ClientType: cluster.FilerType,
+			})
+			if err != nil {
+				return err
+			}
+
+			for _, clusterNode := range resp.ClusterNodes {
+				filers = append(filers, pb.ServerAddress(clusterNode.Address))
+			}
+			return nil
+		})
+		if len(filers) > 0 {
+			commandEnv.GetOptions().FilerAddress = filers[rand.Intn(len(filers))]
+			glog.V(0).Infof("shell filer address: %s\n", commandEnv.GetOptions().FilerAddress)
+		}
+	}
+
 	reg, _ := regexp.Compile(`'.*?'|".*?"|\S+`)
 
-	go commandEnv.MasterClient.KeepConnectedToMaster()
-
-	go func() {
-		commandEnv.MasterClient.WaitUntilConnected()
-
-		for {
-			time.Sleep(time.Duration(sleepMinutes) * time.Minute)
-			if ms.Topo.IsLeader() {
-				for _, line := range scriptLines {
-					for _, c := range strings.Split(line, ";") {
-						processEachCmd(reg, c, commandEnv)
-					}
-				}
-			}
+	for _, line := range scriptLines {
+		for _, c := range strings.Split(line, ";") {
+			processEachCmd(reg, c, commandEnv)
 		}
-	}()
+	}
 }
 
 func processEachCmd(reg *regexp.Regexp, line string, commandEnv *shell.CommandEnv) {

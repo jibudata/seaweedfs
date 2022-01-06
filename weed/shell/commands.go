@@ -81,6 +81,10 @@ func (ce *CommandEnv) confirmIsLocked(args []string) error {
 
 }
 
+func (ce *CommandEnv) GetOptions() *ShellOptions {
+	return &ce.option
+}
+
 func (ce *CommandEnv) checkDirectory(path string) error {
 
 	dir, name := util.FullPath(path).DirAndName()
