@@ -112,7 +112,7 @@ func doVolumeTierDownload(commandEnv *CommandEnv, writer io.Writer, collection s
 
 	// TODO parallelize this
 	for _, loc := range locations {
-        fmt.Printf("volume location: %v for download\n", loc)
+		fmt.Printf("volume location: %v for download\n", loc)
 		// copy the .dat file from remote tier to local
 		err = downloadDatFromRemoteTier(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, loc.ServerAddress())
 		if err != nil {

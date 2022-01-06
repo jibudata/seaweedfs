@@ -55,8 +55,8 @@ func LoadConfiguration(config *util.ViperProxy) {
 			glog.Fatalf("backend storage type %s not found", backendTypeName)
 		}
 		for backendStorageId := range config.GetStringMap(StorageBackendPrefix + "." + backendTypeName) {
-            glog.Infof("backend storage id: %s", backendStorageId)
-            glog.Infof("backend storage type: %s", backendTypeName)
+			glog.Infof("backend storage id: %s", backendStorageId)
+			glog.Infof("backend storage type: %s", backendTypeName)
 			if !config.GetBool(StorageBackendPrefix + "." + backendTypeName + "." + backendStorageId + ".enabled") {
 				continue
 			}
@@ -69,7 +69,7 @@ func LoadConfiguration(config *util.ViperProxy) {
 				glog.Fatalf("fail to create backend storage %s.%s", backendTypeName, backendStorageId)
 			}
 			BackendStorages[backendTypeName+"."+backendStorageId] = backendStorage
-            glog.Infof("backend storage: %v", backendStorage)
+			glog.Infof("backend storage: %v", backendStorage)
 			if backendStorageId == "default" {
 				BackendStorages[backendTypeName] = backendStorage
 			}

@@ -6,13 +6,16 @@ all: build
 
 .PHONY : clean debug_mount
 
-build:
+build: fmt
 	go build -v -gcflags="all=-N -l" -o bin/weed
 
 install:
 	#go install
 	cp -f bin/weed /usr/local/bin/
 	scp bin/weed root@freemen:/usr/local/bin/
+
+fmt:
+	go fmt ./...
 
 clean:
 	go clean $(SOURCE_DIR)

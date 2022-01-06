@@ -10,6 +10,7 @@ import (
 
 	"google.golang.org/grpc"
 
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/operation"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
@@ -64,7 +65,8 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	quietPeriod := tierCommand.Duration("quietFor", 24*time.Hour, "select volumes without no writes for this period")
 	dest := tierCommand.String("dest", "", "the target tier name")
 	keepLocalDatFile := tierCommand.Bool("keepLocalDatFile", false, "whether keep local dat file")
-    uploadAllCopies := tierCommand.Bool("allReplicas", false, "whether upload all volume replicas")
+	uploadAllCopies := tierCommand.Bool("allReplicas", false, "whether upload all volume replicas")
+
 	if err = tierCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -86,7 +88,8 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	if err != nil {
 		return err
 	}
-	fmt.Printf("tier upload volumes: %v\n", volumeIds)
+	//fmt.Printf("tier upload volumes: %v\n", volumeIds)
+	glog.V(0).Infof("collected volumes: %v", volumeIds)
 	for _, vid := range volumeIds {
 		if err = doVolumeTierUpload(commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile, *uploadAllCopies); err != nil {
 			return err
@@ -103,28 +106,30 @@ func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection str
 		return fmt.Errorf("volume %d not found", vid)
 	}
 
-    fmt.Printf("volume locations: %v\n", locations)
+	//fmt.Printf("volume locations: %v\n", locations)
+	glog.V(0).Infof("volume locations: %v", locations)
 	err = markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, needle.VolumeId(vid), locations, false)
 	if err != nil {
 		return fmt.Errorf("mark volume %d as readonly on %s: %v", vid, locations[0].Url, err)
 	}
 
 	// copy the .dat file to remote tier
-    if uploadAllCopies {
-        for _, loc := range locations {
-            // Copy all replicas
-            fmt.Printf("upload volume on location: %v\n", loc)
-            err = uploadDatToRemoteTier(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, loc.ServerAddress(), dest, keepLocalDatFile)
-            if err != nil {
-                return fmt.Errorf("copy dat file for volume %d on %s to %s: %v", vid, locations[0].Url, dest, err)
-            }
-        }
-    } else {
-        err = uploadDatToRemoteTier(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, locations[0].ServerAddress(), dest, keepLocalDatFile)
-        if err != nil {
-            return fmt.Errorf("copy dat file for volume %d on %s to %s: %v", vid, locations[0].Url, dest, err)
-        }
-    }
+	if uploadAllCopies {
+		for _, loc := range locations {
+			// Copy all replicas
+			//fmt.Printf("upload volume on location: %v\n", loc)
+			glog.V(0).Infof("upload volume: %s on location: %v", vid, loc)
+			err = uploadDatToRemoteTier(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, loc.ServerAddress(), dest, keepLocalDatFile)
+			if err != nil {
+				return fmt.Errorf("copy dat file for volume %d on %s to %s: %v", vid, locations[0].Url, dest, err)
+			}
+		}
+	} else {
+		err = uploadDatToRemoteTier(commandEnv.option.GrpcDialOption, writer, needle.VolumeId(vid), collection, locations[0].ServerAddress(), dest, keepLocalDatFile)
+		if err != nil {
+			return fmt.Errorf("copy dat file for volume %d on %s to %s: %v", vid, locations[0].Url, dest, err)
+		}
+	}
 
 	return nil
 }
