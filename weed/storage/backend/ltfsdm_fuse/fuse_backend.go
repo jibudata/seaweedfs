@@ -244,7 +244,7 @@ func (f FuseBackendStorageFile) WriteAt(p []byte, off int64) (n int, err error) 
 }
 
 func (f FuseBackendStorageFile) Truncate(off int64) error {
-	panic("not implemented")
+	return f.destFile.Truncate(off)
 }
 
 func (f FuseBackendStorageFile) Close() error {
