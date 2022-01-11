@@ -12,7 +12,6 @@ build: fmt
 install:
 	#go install
 	cp -f bin/weed /usr/local/bin/
-	scp bin/weed root@freemen:/usr/local/bin/
 
 fmt:
 	go fmt ./...
