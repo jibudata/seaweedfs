@@ -421,6 +421,16 @@ message DiskStatus {
     string disk_type = 7;
 }
 
+message BackendStatus {
+    string dir = 1;
+    uint64 all = 2;
+    uint64 used = 3;
+    uint64 free = 4;
+    float percent_free = 5;
+    float percent_used = 6;
+    string backend_type = 7;
+}
+
 message MemStatus {
     int32 goroutines = 1;
     uint64 all = 2;

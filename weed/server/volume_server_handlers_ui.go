@@ -1,15 +1,16 @@
 package weed_server
 
 import (
-	"github.com/chrislusf/seaweedfs/weed/pb"
 	"net/http"
 	"path/filepath"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/pb"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	ui "github.com/chrislusf/seaweedfs/weed/server/volume_server_ui"
 	"github.com/chrislusf/seaweedfs/weed/stats"
 	"github.com/chrislusf/seaweedfs/weed/storage"
+	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/util"
 )
 
@@ -34,15 +35,24 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 			normalVolumeInfos = append(normalVolumeInfos, vinfo)
 		}
 	}
+
+	var bs []*volume_server_pb.BackendStatus
+	if dm, exists := backend.BackendStorages["ltfsdm"]; exists {
+		root_path := dm.ToProperties()["root_path"]
+		dmStatus := stats.NewBackendStatus(root_path)
+		dmStatus.BackendType = "ltfsdm"
+		bs = append(bs, dmStatus)
+	}
 	args := struct {
-		Version       string
-		Masters       []pb.ServerAddress
-		Volumes       interface{}
-		EcVolumes     interface{}
-		RemoteVolumes interface{}
-		DiskStatuses  interface{}
-		Stats         interface{}
-		Counters      *stats.ServerStats
+		Version         string
+		Masters         []pb.ServerAddress
+		Volumes         interface{}
+		EcVolumes       interface{}
+		RemoteVolumes   interface{}
+		DiskStatuses    interface{}
+		BackendStatuses interface{}
+		Stats           interface{}
+		Counters        *stats.ServerStats
 	}{
 		util.Version(),
 		vs.SeedMasterNodes,
@@ -50,6 +60,7 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		vs.store.EcVolumes(),
 		remoteVolumeInfos,
 		ds,
+		bs,
 		infos,
 		serverStats,
 	}
