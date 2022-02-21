@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+
+option go_package = "./;protobuf";
+
+package protobuf;
+
+service Archivaler {
+  rpc GetTapeInfo (TapeInfoRequest) returns (TapeInfoReply) {}
+  rpc PutObject (PutObjectReqeust) returns (PutObjectReply) {}
+}
+
+message TapeInfoRequest {
+  string name = 1;
+}
+
+message TapeInfoReply {
+  string info = 1;
+}
+
+message PutObjectReqeust {
+  bool islocal = 1;
+  string srcpath = 2;
+  int32 size = 3;
+  bytes binary = 4;
+}
+
+message PutObjectReply {
+  string despath = 1;
+}

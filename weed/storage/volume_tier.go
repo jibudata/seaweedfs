@@ -4,6 +4,7 @@ import (
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
+	_ "github.com/chrislusf/seaweedfs/weed/storage/backend/archival_backend"
 	_ "github.com/chrislusf/seaweedfs/weed/storage/backend/ltfsdm_fuse"
 	_ "github.com/chrislusf/seaweedfs/weed/storage/backend/s3_backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
