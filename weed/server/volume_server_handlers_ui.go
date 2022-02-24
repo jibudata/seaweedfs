@@ -43,6 +43,13 @@ func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) 
 		dmStatus.BackendType = "ltfsdm"
 		bs = append(bs, dmStatus)
 	}
+	if archival, exists := backend.BackendStorages["archival"]; exists {
+		addr := archival.ToProperties()["addr"]
+		pool := archival.ToProperties()["pool"]
+		archivalStatus := stats.NewArchivalBackendStatus(addr, pool)
+		archivalStatus.BackendType = "archival"
+		bs = append(bs, archivalStatus)
+	}
 	args := struct {
 		Version         string
 		Masters         []pb.ServerAddress

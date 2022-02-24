@@ -20,6 +20,15 @@ const _ = grpc.SupportPackageIsVersion7
 type ArchivalerClient interface {
 	GetTapeInfo(ctx context.Context, in *TapeInfoRequest, opts ...grpc.CallOption) (*TapeInfoReply, error)
 	PutObject(ctx context.Context, in *PutObjectReqeust, opts ...grpc.CallOption) (*PutObjectReply, error)
+	GetDmStatus(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*DmStatus, error)
+	GetPoolsInfo(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*PoolsInfo, error)
+	GetDriversInfo(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*DriversInfo, error)
+	GetTapesInfo(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*TapesInfo, error)
+	CreatePool(ctx context.Context, in *PoolName, opts ...grpc.CallOption) (*ReplyMsg, error)
+	DeletePool(ctx context.Context, in *PoolName, opts ...grpc.CallOption) (*ReplyMsg, error)
+	Migrate(ctx context.Context, in *MigrateRequest, opts ...grpc.CallOption) (*MigrationStatus, error)
+	Recall(ctx context.Context, in *RecallRequest, opts ...grpc.CallOption) (*MigrationStatus, error)
+	Retrieve(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ReplyMsg, error)
 }
 
 type archivalerClient struct {
@@ -48,12 +57,102 @@ func (c *archivalerClient) PutObject(ctx context.Context, in *PutObjectReqeust, 
 	return out, nil
 }
 
+func (c *archivalerClient) GetDmStatus(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*DmStatus, error) {
+	out := new(DmStatus)
+	err := c.cc.Invoke(ctx, "/protobuf.Archivaler/GetDmStatus", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *archivalerClient) GetPoolsInfo(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*PoolsInfo, error) {
+	out := new(PoolsInfo)
+	err := c.cc.Invoke(ctx, "/protobuf.Archivaler/GetPoolsInfo", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *archivalerClient) GetDriversInfo(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*DriversInfo, error) {
+	out := new(DriversInfo)
+	err := c.cc.Invoke(ctx, "/protobuf.Archivaler/GetDriversInfo", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *archivalerClient) GetTapesInfo(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*TapesInfo, error) {
+	out := new(TapesInfo)
+	err := c.cc.Invoke(ctx, "/protobuf.Archivaler/GetTapesInfo", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *archivalerClient) CreatePool(ctx context.Context, in *PoolName, opts ...grpc.CallOption) (*ReplyMsg, error) {
+	out := new(ReplyMsg)
+	err := c.cc.Invoke(ctx, "/protobuf.Archivaler/CreatePool", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *archivalerClient) DeletePool(ctx context.Context, in *PoolName, opts ...grpc.CallOption) (*ReplyMsg, error) {
+	out := new(ReplyMsg)
+	err := c.cc.Invoke(ctx, "/protobuf.Archivaler/DeletePool", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *archivalerClient) Migrate(ctx context.Context, in *MigrateRequest, opts ...grpc.CallOption) (*MigrationStatus, error) {
+	out := new(MigrationStatus)
+	err := c.cc.Invoke(ctx, "/protobuf.Archivaler/Migrate", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *archivalerClient) Recall(ctx context.Context, in *RecallRequest, opts ...grpc.CallOption) (*MigrationStatus, error) {
+	out := new(MigrationStatus)
+	err := c.cc.Invoke(ctx, "/protobuf.Archivaler/Recall", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *archivalerClient) Retrieve(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ReplyMsg, error) {
+	out := new(ReplyMsg)
+	err := c.cc.Invoke(ctx, "/protobuf.Archivaler/Retrieve", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ArchivalerServer is the server API for Archivaler service.
 // All implementations must embed UnimplementedArchivalerServer
 // for forward compatibility
 type ArchivalerServer interface {
 	GetTapeInfo(context.Context, *TapeInfoRequest) (*TapeInfoReply, error)
 	PutObject(context.Context, *PutObjectReqeust) (*PutObjectReply, error)
+	GetDmStatus(context.Context, *Empty) (*DmStatus, error)
+	GetPoolsInfo(context.Context, *Empty) (*PoolsInfo, error)
+	GetDriversInfo(context.Context, *Empty) (*DriversInfo, error)
+	GetTapesInfo(context.Context, *Empty) (*TapesInfo, error)
+	CreatePool(context.Context, *PoolName) (*ReplyMsg, error)
+	DeletePool(context.Context, *PoolName) (*ReplyMsg, error)
+	Migrate(context.Context, *MigrateRequest) (*MigrationStatus, error)
+	Recall(context.Context, *RecallRequest) (*MigrationStatus, error)
+	Retrieve(context.Context, *Empty) (*ReplyMsg, error)
 	mustEmbedUnimplementedArchivalerServer()
 }
 
@@ -66,6 +165,33 @@ func (UnimplementedArchivalerServer) GetTapeInfo(context.Context, *TapeInfoReque
 }
 func (UnimplementedArchivalerServer) PutObject(context.Context, *PutObjectReqeust) (*PutObjectReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PutObject not implemented")
+}
+func (UnimplementedArchivalerServer) GetDmStatus(context.Context, *Empty) (*DmStatus, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetDmStatus not implemented")
+}
+func (UnimplementedArchivalerServer) GetPoolsInfo(context.Context, *Empty) (*PoolsInfo, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetPoolsInfo not implemented")
+}
+func (UnimplementedArchivalerServer) GetDriversInfo(context.Context, *Empty) (*DriversInfo, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetDriversInfo not implemented")
+}
+func (UnimplementedArchivalerServer) GetTapesInfo(context.Context, *Empty) (*TapesInfo, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetTapesInfo not implemented")
+}
+func (UnimplementedArchivalerServer) CreatePool(context.Context, *PoolName) (*ReplyMsg, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CreatePool not implemented")
+}
+func (UnimplementedArchivalerServer) DeletePool(context.Context, *PoolName) (*ReplyMsg, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeletePool not implemented")
+}
+func (UnimplementedArchivalerServer) Migrate(context.Context, *MigrateRequest) (*MigrationStatus, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Migrate not implemented")
+}
+func (UnimplementedArchivalerServer) Recall(context.Context, *RecallRequest) (*MigrationStatus, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Recall not implemented")
+}
+func (UnimplementedArchivalerServer) Retrieve(context.Context, *Empty) (*ReplyMsg, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Retrieve not implemented")
 }
 func (UnimplementedArchivalerServer) mustEmbedUnimplementedArchivalerServer() {}
 
@@ -116,6 +242,168 @@ func _Archivaler_PutObject_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Archivaler_GetDmStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ArchivalerServer).GetDmStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/protobuf.Archivaler/GetDmStatus",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ArchivalerServer).GetDmStatus(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Archivaler_GetPoolsInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ArchivalerServer).GetPoolsInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/protobuf.Archivaler/GetPoolsInfo",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ArchivalerServer).GetPoolsInfo(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Archivaler_GetDriversInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ArchivalerServer).GetDriversInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/protobuf.Archivaler/GetDriversInfo",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ArchivalerServer).GetDriversInfo(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Archivaler_GetTapesInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ArchivalerServer).GetTapesInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/protobuf.Archivaler/GetTapesInfo",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ArchivalerServer).GetTapesInfo(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Archivaler_CreatePool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PoolName)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ArchivalerServer).CreatePool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/protobuf.Archivaler/CreatePool",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ArchivalerServer).CreatePool(ctx, req.(*PoolName))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Archivaler_DeletePool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PoolName)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ArchivalerServer).DeletePool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/protobuf.Archivaler/DeletePool",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ArchivalerServer).DeletePool(ctx, req.(*PoolName))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Archivaler_Migrate_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MigrateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ArchivalerServer).Migrate(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/protobuf.Archivaler/Migrate",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ArchivalerServer).Migrate(ctx, req.(*MigrateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Archivaler_Recall_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RecallRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ArchivalerServer).Recall(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/protobuf.Archivaler/Recall",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ArchivalerServer).Recall(ctx, req.(*RecallRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Archivaler_Retrieve_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Empty)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ArchivalerServer).Retrieve(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/protobuf.Archivaler/Retrieve",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ArchivalerServer).Retrieve(ctx, req.(*Empty))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Archivaler_ServiceDesc is the grpc.ServiceDesc for Archivaler service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -130,6 +418,42 @@ var Archivaler_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PutObject",
 			Handler:    _Archivaler_PutObject_Handler,
+		},
+		{
+			MethodName: "GetDmStatus",
+			Handler:    _Archivaler_GetDmStatus_Handler,
+		},
+		{
+			MethodName: "GetPoolsInfo",
+			Handler:    _Archivaler_GetPoolsInfo_Handler,
+		},
+		{
+			MethodName: "GetDriversInfo",
+			Handler:    _Archivaler_GetDriversInfo_Handler,
+		},
+		{
+			MethodName: "GetTapesInfo",
+			Handler:    _Archivaler_GetTapesInfo_Handler,
+		},
+		{
+			MethodName: "CreatePool",
+			Handler:    _Archivaler_CreatePool_Handler,
+		},
+		{
+			MethodName: "DeletePool",
+			Handler:    _Archivaler_DeletePool_Handler,
+		},
+		{
+			MethodName: "Migrate",
+			Handler:    _Archivaler_Migrate_Handler,
+		},
+		{
+			MethodName: "Recall",
+			Handler:    _Archivaler_Recall_Handler,
+		},
+		{
+			MethodName: "Retrieve",
+			Handler:    _Archivaler_Retrieve_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

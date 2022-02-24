@@ -36,6 +36,7 @@ func (f *ArchivalBackendFactory) BuildStorage(conf backend.StringProperties, con
 type ArchivalBackendStorage struct {
 	id              string
 	addr            string
+	pool			string
 	managedFsStatus string
 }
 
@@ -44,6 +45,7 @@ func newArchivalBackendStorage(conf backend.StringProperties, configPrefix strin
 	f := &ArchivalBackendStorage{
 		id:     id,
 		addr: conf.GetString(configPrefix + "addr"),
+		pool: conf.GetString(configPrefix + "pool"),
 	}
 	glog.V(0).Infof("create archival backend storage,id: archival.%s, root path: %s", id, f.addr)
 
@@ -54,6 +56,7 @@ func newArchivalBackendStorage(conf backend.StringProperties, configPrefix strin
 func (s *ArchivalBackendStorage) ToProperties() map[string]string {
 	m := make(map[string]string)
 	m["addr"] = s.addr
+	m["pool"] = s.pool
 	return m
 }
 
@@ -84,8 +87,12 @@ func (s *ArchivalBackendStorage) CopyFile(f *os.File, fn func(progressed int64, 
 		glog.V(1).Infof("New Front Api failed")
 	}
 
-	re, err := front.PutLocalObject(fileName)
-	return re, 100, nil
+	re, err := front.Migrate(fileName, s.pool)
+	if(re) {
+		return "Migrated", 100, nil
+	} else {
+		return "Failed", 0, err
+	}
 	// New file in fuse mount point
 	// destFilename := s.rootFs + "/" + path.Base(f.Name())
 	// destFile, err := os.Create(destFilename)
@@ -144,6 +151,17 @@ func (s *ArchivalBackendStorage) CopyFile(f *os.File, fn func(progressed int64, 
 }
 
 func (s *ArchivalBackendStorage) DownloadFile(fileName, key string, fn func(progressed int64, percentage float32) error) (size int64, err error) {
+	front, err := pb.NewFrontApi(s.addr)
+	if err != nil {
+		glog.V(1).Infof("New Front Api failed")
+	}
+
+	re, err := front.Recall(fileName, true)
+	if(re) {
+		return 100, nil
+	} else {
+		return  0, err
+	}
 	// glog.V(0).Infof("copying dat file of from fuse ltfsdm.%s as volume %s", s.id, fileName)
 
 	// // Source file in fuse mount point
@@ -214,7 +232,6 @@ func (s *ArchivalBackendStorage) DownloadFile(fileName, key string, fn func(prog
 
 	// glog.V(0).Infof("download complete: %s", srcFilename)
 	// return totalWritten, nil
-	return 100, nil
 }
 
 func (s *ArchivalBackendStorage) DeleteFile(key string) (err error) {
