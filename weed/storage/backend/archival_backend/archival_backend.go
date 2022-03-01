@@ -73,21 +73,15 @@ func (s *ArchivalBackendStorage) NewStorageFile(volFileName, key string, tierInf
 	}
 }
 
-func (s *ArchivalBackendStorage) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
-	glog.V(1).Infof("copying dat file of %s to archival %s as %s", f.Name(), s.id, key)
+func (s *ArchivalBackendStorage) CopyFile(fullpath string, f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
+	glog.V(1).Infof("copying dat file of %s to archival %s as %s", fullpath, s.id, key)
 
-	// Original volume file
-	info, err := f.Stat()
-	if err != nil {
-		return key, 0, fmt.Errorf("failed to stat file %q, %v", f.Name(), err)
-	}
-	fileName := info.Name()
 	front, err := pb.NewFrontApi(s.addr)
 	if err != nil {
 		glog.V(1).Infof("New Front Api failed")
 	}
 
-	re, err := front.Migrate(fileName, s.pool)
+	re, err := front.Migrate(fullpath, s.pool)
 	if(re) {
 		return "Migrated", 100, nil
 	} else {

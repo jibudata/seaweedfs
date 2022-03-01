@@ -112,21 +112,21 @@ func (f *FrontApi) GetPoolInfo(name string) (Pool, bool) {
 }
 
 func (f *FrontApi) Migrate(file string, poolName string) (success bool, e error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(6000)*time.Second)
 	defer cancel()
 	status, err := f.c.Migrate(ctx, &pb.MigrateRequest{PoolName: poolName, Files: []string{file}})
 	return status.Success, err
 }
 
 func (f *FrontApi) Recall(file string, resident bool) (success bool, e error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(3000)*time.Second)
 	defer cancel()
 	status, err := f.c.Recall(ctx, &pb.RecallRequest{Resident: resident, Files: []string{file}})
 	return status.Success, err
 }
 
 func (f *FrontApi) Retrieve() error {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(3000)*time.Second)
 	defer cancel()
 	_, err := f.c.Retrieve(ctx, &pb.Empty{})
 	return err

@@ -79,7 +79,7 @@ func (s *S3BackendStorage) NewStorageFile(volFileName, key string, tierInfo *vol
 	return f
 }
 
-func (s *S3BackendStorage) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
+func (s *S3BackendStorage) CopyFile(fullpath string, f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
 	randomUuid, _ := uuid.NewRandom()
 	key = randomUuid.String()
 
