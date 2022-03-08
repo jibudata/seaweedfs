@@ -65,7 +65,7 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 
 	// copy the data file
 	fullName := v.FileName(".dat")
-	glog.V(0).Infof("start copying file: %s", fullName)
+	glog.V(0).Infof("start copying file: %s", fullName, " to backend type:", backendType)
 	key, size, err := backendStorage.CopyFile(fullName, diskFile.File, fn)
 	if err != nil {
 		return fmt.Errorf("backend %s copy file %s: %v", req.DestinationBackendName, diskFile.Name(), err)
@@ -90,7 +90,7 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 		return fmt.Errorf("volume %d fail to load remote file: %v", v.Id, err)
 	}
 
-	if !req.KeepLocalDatFile {
+	if !req.KeepLocalDatFile && backendType != "archival" {
 		os.Remove(v.FileName(".dat"))
 	}
 

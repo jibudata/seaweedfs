@@ -74,7 +74,7 @@ func (s *ArchivalBackendStorage) NewStorageFile(volFileName, key string, tierInf
 }
 
 func (s *ArchivalBackendStorage) CopyFile(fullpath string, f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
-	glog.V(1).Infof("copying dat file of %s to archival %s as %s", fullpath, s.id, key)
+	glog.V(1).Infof("copying dat file of %s to archival %s as %s", fullpath, s.pool, key)
 
 	front, err := pb.NewFrontApi(s.addr)
 	if err != nil {
