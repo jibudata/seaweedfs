@@ -87,61 +87,6 @@ func (s *ArchivalBackendStorage) CopyFile(fullpath string, f *os.File, fn func(p
 	} else {
 		return "Failed", 0, err
 	}
-	// New file in fuse mount point
-	// destFilename := s.rootFs + "/" + path.Base(f.Name())
-	// destFile, err := os.Create(destFilename)
-	// glog.V(0).Infof("create dest file: %s", destFilename)
-	// if err != nil {
-	// 	glog.V(0).Infof("create dest file failed: %s", destFilename)
-	// 	return key, 0, fmt.Errorf("failed to create desination file %q, %v", destFilename, err)
-	// }
-	// defer destFile.Close()
-
-	// glog.V(0).Infof("destination file name in fuse: %s", destFilename)
-
-	// Read from original volume and write to new file
-	// var totalWritten int64
-	// totalWritten = 0
-	// fileSize := info.Size()
-
-	// partSize := int64(64 * 1024 * 1024) // The minimum/default allowed part size is 5MB
-	// for partSize*1000 < fileSize {
-	// 	partSize *= 4
-	// }
-
-	// buffer := make([]byte, partSize)
-	// rbuf := bufio.NewReader(f)
-	// wbuf := bufio.NewWriter(destFile)
-
-	// for {
-	// 	bytesread, err := rbuf.Read(buffer)
-	// 	if err != nil && err != io.EOF {
-	// 		return key, totalWritten, err
-	// 	}
-	// 	if bytesread == 0 {
-	// 		break
-	// 	}
-
-	// 	_, err = wbuf.Write(buffer[:bytesread])
-	// 	if err != nil {
-	// 		return key, totalWritten, err
-	// 	}
-	// 	totalWritten += int64(bytesread)
-
-	// 	// Progress function
-	// 	if fn != nil {
-	// 		if err := fn(totalWritten, float32(totalWritten*100)/float32(fileSize)); err != nil {
-	// 			return key, totalWritten, err
-	// 		}
-	// 	}
-
-	// 	if totalWritten == fileSize {
-	// 		break
-	// 	}
-	// }
-
-	// glog.V(0).Infof("upload complete: %s", destFilename)
-	// return key, totalWritten, nil
 }
 
 func (s *ArchivalBackendStorage) DownloadFile(fileName, key string, fn func(progressed int64, percentage float32) error) (size int64, err error) {
@@ -156,76 +101,6 @@ func (s *ArchivalBackendStorage) DownloadFile(fileName, key string, fn func(prog
 	} else {
 		return  0, err
 	}
-	// glog.V(0).Infof("copying dat file of from fuse ltfsdm.%s as volume %s", s.id, fileName)
-
-	// // Source file in fuse mount point
-	// srcFilename := s.rootFs + "/" + path.Base(fileName)
-	// srcFile, err := os.Open(srcFilename)
-	// if err != nil {
-	// 	return 0, fmt.Errorf("failed to open source file %q, %v", srcFilename, err)
-	// }
-	// defer srcFile.Close()
-
-	// // Source volume file
-	// info, err := srcFile.Stat()
-	// if err != nil {
-	// 	return 0, fmt.Errorf("failed to stat file %q, %v", srcFilename, err)
-	// }
-
-	// // Create destination file for volume
-	// destFile, err := os.Create(fileName)
-	// if err != nil {
-	// 	return 0, fmt.Errorf("failed to open desination file %q, %v", fileName, err)
-	// }
-	// defer destFile.Close()
-
-	// // Read from original volume and write to new file
-	// var totalWritten int64
-	// totalWritten = 0
-	// fileSize := info.Size()
-
-	// partSize := int64(64 * 1024 * 1024) // The minimum/default allowed part size is 5MB
-	// for partSize*1000 < fileSize {
-	// 	partSize *= 4
-	// }
-
-	// buffer := make([]byte, partSize)
-	// rbuf := bufio.NewReader(srcFile)
-	// wbuf := bufio.NewWriter(destFile)
-
-	// for {
-	// 	if totalWritten == 0 {
-	// 		glog.V(0).Infof("first time reading from ltfsdm.%s file %s may take few mins", s.id, fileName)
-	// 	}
-
-	// 	bytesread, err := rbuf.Read(buffer)
-	// 	if err != nil && err != io.EOF {
-	// 		return totalWritten, err
-	// 	}
-	// 	if bytesread == 0 {
-	// 		break
-	// 	}
-
-	// 	_, err = wbuf.Write(buffer[:bytesread])
-	// 	if err != nil {
-	// 		return totalWritten, err
-	// 	}
-	// 	totalWritten += int64(bytesread)
-
-	// 	// Progress function
-	// 	if fn != nil {
-	// 		if err := fn(totalWritten, float32(totalWritten*100)/float32(fileSize)); err != nil {
-	// 			return totalWritten, err
-	// 		}
-	// 	}
-
-	// 	if totalWritten == fileSize {
-	// 		break
-	// 	}
-	// }
-
-	// glog.V(0).Infof("download complete: %s", srcFilename)
-	// return totalWritten, nil
 }
 
 func (s *ArchivalBackendStorage) DeleteFile(key string) (err error) {
@@ -241,8 +116,16 @@ type ArchivalBackendStorageFile struct {
 }
 
 func (f ArchivalBackendStorageFile) ReadAt(p []byte, off int64) (n int, err error) {
-	// n, err = f.destFile.ReadAt(p, off)
-	// glog.V(0).Infof("readat, off: %d, size: %d", off, n)
+	_, e := f.backend.DownloadFile(f.destFile, "", nil)
+	if(e != nil) {
+		return 0, e
+	}
+	file, ef := os.Open(f.destFile)
+	if(ef != nil) {
+		return 0, ef
+	}
+	n, err = file.ReadAt(p, off)
+	glog.V(0).Infof("readat, off: %d, size: %d", off, n)
 	return
 }
 
@@ -256,9 +139,6 @@ func (f ArchivalBackendStorageFile) Truncate(off int64) error {
 }
 
 func (f ArchivalBackendStorageFile) Close() error {
-	// glog.V(0).Infof("close fuse backend file: %s", f.volDataFile)
-	// f.destFile.Close()
-	// return nil
 	return nil
 }
 
