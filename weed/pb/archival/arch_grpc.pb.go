@@ -29,6 +29,9 @@ type ArchivalerClient interface {
 	Migrate(ctx context.Context, in *MigrateRequest, opts ...grpc.CallOption) (*MigrationStatus, error)
 	Recall(ctx context.Context, in *RecallRequest, opts ...grpc.CallOption) (*MigrationStatus, error)
 	Retrieve(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*ReplyMsg, error)
+	MigrateAsync(ctx context.Context, in *MigrateRequest, opts ...grpc.CallOption) (*MigrationStatus, error)
+	RecallAsync(ctx context.Context, in *RecallRequest, opts ...grpc.CallOption) (*MigrationStatus, error)
+	GetAsyncStatus(ctx context.Context, in *AsyncStatusRequest, opts ...grpc.CallOption) (*MigrationStatus, error)
 }
 
 type archivalerClient struct {
@@ -138,6 +141,33 @@ func (c *archivalerClient) Retrieve(ctx context.Context, in *Empty, opts ...grpc
 	return out, nil
 }
 
+func (c *archivalerClient) MigrateAsync(ctx context.Context, in *MigrateRequest, opts ...grpc.CallOption) (*MigrationStatus, error) {
+	out := new(MigrationStatus)
+	err := c.cc.Invoke(ctx, "/protobuf.Archivaler/MigrateAsync", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *archivalerClient) RecallAsync(ctx context.Context, in *RecallRequest, opts ...grpc.CallOption) (*MigrationStatus, error) {
+	out := new(MigrationStatus)
+	err := c.cc.Invoke(ctx, "/protobuf.Archivaler/RecallAsync", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *archivalerClient) GetAsyncStatus(ctx context.Context, in *AsyncStatusRequest, opts ...grpc.CallOption) (*MigrationStatus, error) {
+	out := new(MigrationStatus)
+	err := c.cc.Invoke(ctx, "/protobuf.Archivaler/GetAsyncStatus", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ArchivalerServer is the server API for Archivaler service.
 // All implementations must embed UnimplementedArchivalerServer
 // for forward compatibility
@@ -153,6 +183,9 @@ type ArchivalerServer interface {
 	Migrate(context.Context, *MigrateRequest) (*MigrationStatus, error)
 	Recall(context.Context, *RecallRequest) (*MigrationStatus, error)
 	Retrieve(context.Context, *Empty) (*ReplyMsg, error)
+	MigrateAsync(context.Context, *MigrateRequest) (*MigrationStatus, error)
+	RecallAsync(context.Context, *RecallRequest) (*MigrationStatus, error)
+	GetAsyncStatus(context.Context, *AsyncStatusRequest) (*MigrationStatus, error)
 	mustEmbedUnimplementedArchivalerServer()
 }
 
@@ -192,6 +225,15 @@ func (UnimplementedArchivalerServer) Recall(context.Context, *RecallRequest) (*M
 }
 func (UnimplementedArchivalerServer) Retrieve(context.Context, *Empty) (*ReplyMsg, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Retrieve not implemented")
+}
+func (UnimplementedArchivalerServer) MigrateAsync(context.Context, *MigrateRequest) (*MigrationStatus, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MigrateAsync not implemented")
+}
+func (UnimplementedArchivalerServer) RecallAsync(context.Context, *RecallRequest) (*MigrationStatus, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RecallAsync not implemented")
+}
+func (UnimplementedArchivalerServer) GetAsyncStatus(context.Context, *AsyncStatusRequest) (*MigrationStatus, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetAsyncStatus not implemented")
 }
 func (UnimplementedArchivalerServer) mustEmbedUnimplementedArchivalerServer() {}
 
@@ -404,6 +446,60 @@ func _Archivaler_Retrieve_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Archivaler_MigrateAsync_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MigrateRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ArchivalerServer).MigrateAsync(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/protobuf.Archivaler/MigrateAsync",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ArchivalerServer).MigrateAsync(ctx, req.(*MigrateRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Archivaler_RecallAsync_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RecallRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ArchivalerServer).RecallAsync(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/protobuf.Archivaler/RecallAsync",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ArchivalerServer).RecallAsync(ctx, req.(*RecallRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Archivaler_GetAsyncStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AsyncStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ArchivalerServer).GetAsyncStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/protobuf.Archivaler/GetAsyncStatus",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ArchivalerServer).GetAsyncStatus(ctx, req.(*AsyncStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Archivaler_ServiceDesc is the grpc.ServiceDesc for Archivaler service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -454,6 +550,18 @@ var Archivaler_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Retrieve",
 			Handler:    _Archivaler_Retrieve_Handler,
+		},
+		{
+			MethodName: "MigrateAsync",
+			Handler:    _Archivaler_MigrateAsync_Handler,
+		},
+		{
+			MethodName: "RecallAsync",
+			Handler:    _Archivaler_RecallAsync_Handler,
+		},
+		{
+			MethodName: "GetAsyncStatus",
+			Handler:    _Archivaler_GetAsyncStatus_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

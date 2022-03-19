@@ -17,6 +17,9 @@ service Archivaler {
   rpc Migrate (MigrateRequest) returns (MigrationStatus) {}
   rpc Recall (RecallRequest) returns (MigrationStatus) {}
   rpc Retrieve (Empty) returns (ReplyMsg) {}
+  rpc MigrateAsync (MigrateRequest) returns (MigrationStatus) {}
+  rpc RecallAsync (RecallRequest) returns (MigrationStatus) {}
+  rpc GetAsyncStatus (AsyncStatusRequest) returns (MigrationStatus) {}
 }
 
 message Empty {
@@ -117,4 +120,8 @@ message MigrationStatus {
   int64 migrated = 7;
   int64 failed = 8;
   bool done = 9;
+}
+
+message AsyncStatusRequest {
+  uint64 reqNumber = 1;
 }

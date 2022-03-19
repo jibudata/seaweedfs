@@ -24,6 +24,17 @@ type Pool struct {
 	Numtapes uint64
 }
 
+type AsyncStatus struct {
+	ReqNumber   uint64
+	Success     bool
+	Done        bool
+	Resident    int64
+	Transferred int64
+	Premigrated int64
+	Migrated    int64
+	Failed      int64
+}
+
 func NewFrontApi(addr string) (front *FrontApi, e error) {
 	front = &FrontApi{addr: addr}
 	conn, err := grpc.Dial(addr, grpc.WithInsecure(), grpc.WithBlock())
@@ -130,4 +141,26 @@ func (f *FrontApi) Retrieve() error {
 	defer cancel()
 	_, err := f.c.Retrieve(ctx, &pb.Empty{})
 	return err
+}
+
+func (f *FrontApi) MigrateAsync(file string, poolName string) (reqNumber uint64, e error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
+	defer cancel()
+	status, err := f.c.MigrateAsync(ctx, &pb.MigrateRequest{PoolName: poolName, Files: []string{file}})
+	return uint64(status.ReqNumber), err
+}
+
+func (f *FrontApi) RecallAsync(file string, resident bool) (reqNumber uint64, e error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
+	defer cancel()
+	status, err := f.c.RecallAsync(ctx, &pb.RecallRequest{Resident: resident, Files: []string{file}})
+	return uint64(status.ReqNumber), err
+}
+
+func (f *FrontApi) GetAsyncStatus(reqNumber uint64) (AsyncStatus, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
+	defer cancel()
+	status, err := f.c.GetAsyncStatus(ctx, &pb.AsyncStatusRequest{ReqNumber: reqNumber})
+	return AsyncStatus{ReqNumber: reqNumber, Success: status.Success, Resident: status.Resident,
+		Transferred: status.Resident, Premigrated: status.Premigrated, Migrated: status.Migrated, Failed: status.Failed}, err
 }
