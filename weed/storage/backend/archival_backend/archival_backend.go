@@ -86,22 +86,23 @@ func (s *ArchivalBackendStorage) CopyFile(fullpath string, f *os.File, fn func(p
 		glog.V(1).Infof("MigrateAsync failed")
 		return "Failed", 0, err
 	}
-	fileStat, _ := f.Stat()
-	migrating := true
-	migrated := int64(0)
-	for migrating {
+	for {
 		status, err := front.GetAsyncStatus(reqNumber)
 		if err != nil {
 			glog.V(1).Infof("GetAsyncStatus failed")
 			return "failed", 0, err
 		}
-		fn(status.Migrated, (float32)(status.Migrated) /  (float32)(fileStat.Size()))
-		migrated = status.Migrated
+		fn(status.Migrated, (float32)(status.Migrated))
 		if(status.Done) {
-			migrating = false
+			break
 		}
 	}
-	return "Success", migrated, nil
+	fileinfo, err := front.GetFileInfo(fullpath)
+	if( err != nil) {
+		glog.V(1).Infof("GetFileInfo failed")
+		return "failed", 0, err
+	}
+	return "Success", int64(fileinfo.Size), nil
 }
 
 func (s *ArchivalBackendStorage) DownloadFile(fileName, key string, fn func(progressed int64, percentage float32) error) (size int64, err error) {
@@ -115,21 +116,23 @@ func (s *ArchivalBackendStorage) DownloadFile(fileName, key string, fn func(prog
 		glog.V(1).Infof("RecallAsync failed")
 		return 0, err
 	}
-	migrating := true
-	migrated := int64(0)
-	for migrating {
+	for {
 		status, err := front.GetAsyncStatus(reqNumber)
 		if err != nil {
 			glog.V(1).Infof("GetAsyncStatus failed")
 			return 0, err
 		}
-		fn(status.Migrated, 1.0)
-		migrated = status.Migrated
+		fn(status.Migrated, (float32)(status.Migrated))
 		if(status.Done) {
-			migrating = false
+			break
 		}
 	}
-	return migrated, nil
+	fileinfo, err := front.GetFileInfo(fileName)
+	if( err != nil) {
+		glog.V(1).Infof("GetFileInfo failed")
+		return 0, err
+	}
+	return int64(fileinfo.Size), nil
 }
 
 func (s *ArchivalBackendStorage) DeleteFile(key string) (err error) {

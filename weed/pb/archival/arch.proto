@@ -20,6 +20,7 @@ service Archivaler {
   rpc MigrateAsync (MigrateRequest) returns (MigrationStatus) {}
   rpc RecallAsync (RecallRequest) returns (MigrationStatus) {}
   rpc GetAsyncStatus (AsyncStatusRequest) returns (MigrationStatus) {}
+  rpc GetFileInfo (FileInfoRequest) returns (FileInfo) {}
 }
 
 message Empty {
@@ -124,4 +125,21 @@ message MigrationStatus {
 
 message AsyncStatusRequest {
   uint64 reqNumber = 1;
+}
+
+message FileInfo {
+  string migState = 1;
+  string fileName = 2;
+  uint64 size = 3;
+  uint64 blocks = 4;
+  uint64 fsidh = 5;
+  uint64 fsidl = 6;
+  uint64 igen = 7;
+  uint64 inum = 8;
+  string tapeId = 9;
+  uint64 startBlock = 10;
+}
+
+message FileInfoRequest {
+  string fileName = 1;
 }

@@ -32,6 +32,7 @@ type ArchivalerClient interface {
 	MigrateAsync(ctx context.Context, in *MigrateRequest, opts ...grpc.CallOption) (*MigrationStatus, error)
 	RecallAsync(ctx context.Context, in *RecallRequest, opts ...grpc.CallOption) (*MigrationStatus, error)
 	GetAsyncStatus(ctx context.Context, in *AsyncStatusRequest, opts ...grpc.CallOption) (*MigrationStatus, error)
+	GetFileInfo(ctx context.Context, in *FileInfoRequest, opts ...grpc.CallOption) (*FileInfo, error)
 }
 
 type archivalerClient struct {
@@ -168,6 +169,15 @@ func (c *archivalerClient) GetAsyncStatus(ctx context.Context, in *AsyncStatusRe
 	return out, nil
 }
 
+func (c *archivalerClient) GetFileInfo(ctx context.Context, in *FileInfoRequest, opts ...grpc.CallOption) (*FileInfo, error) {
+	out := new(FileInfo)
+	err := c.cc.Invoke(ctx, "/protobuf.Archivaler/GetFileInfo", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // ArchivalerServer is the server API for Archivaler service.
 // All implementations must embed UnimplementedArchivalerServer
 // for forward compatibility
@@ -186,6 +196,7 @@ type ArchivalerServer interface {
 	MigrateAsync(context.Context, *MigrateRequest) (*MigrationStatus, error)
 	RecallAsync(context.Context, *RecallRequest) (*MigrationStatus, error)
 	GetAsyncStatus(context.Context, *AsyncStatusRequest) (*MigrationStatus, error)
+	GetFileInfo(context.Context, *FileInfoRequest) (*FileInfo, error)
 	mustEmbedUnimplementedArchivalerServer()
 }
 
@@ -234,6 +245,9 @@ func (UnimplementedArchivalerServer) RecallAsync(context.Context, *RecallRequest
 }
 func (UnimplementedArchivalerServer) GetAsyncStatus(context.Context, *AsyncStatusRequest) (*MigrationStatus, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetAsyncStatus not implemented")
+}
+func (UnimplementedArchivalerServer) GetFileInfo(context.Context, *FileInfoRequest) (*FileInfo, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetFileInfo not implemented")
 }
 func (UnimplementedArchivalerServer) mustEmbedUnimplementedArchivalerServer() {}
 
@@ -500,6 +514,24 @@ func _Archivaler_GetAsyncStatus_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Archivaler_GetFileInfo_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FileInfoRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ArchivalerServer).GetFileInfo(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/protobuf.Archivaler/GetFileInfo",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ArchivalerServer).GetFileInfo(ctx, req.(*FileInfoRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Archivaler_ServiceDesc is the grpc.ServiceDesc for Archivaler service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -562,6 +594,10 @@ var Archivaler_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetAsyncStatus",
 			Handler:    _Archivaler_GetAsyncStatus_Handler,
+		},
+		{
+			MethodName: "GetFileInfo",
+			Handler:    _Archivaler_GetFileInfo_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
