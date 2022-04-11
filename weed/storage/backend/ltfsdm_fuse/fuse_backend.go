@@ -78,7 +78,7 @@ func (s *FuseBackendStorage) NewStorageFile(volFileName, key string, tierInfo *v
 	}
 }
 
-func (s *FuseBackendStorage) CopyFile(f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
+func (s *FuseBackendStorage) CopyFile(fullpath string, f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
 	randomUuid, _ := uuid.NewRandom()
 	key = randomUuid.String()
 

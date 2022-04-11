@@ -1,0 +1,145 @@
+syntax = "proto3";
+
+
+option go_package = "./;protobuf";
+
+package protobuf;
+
+service Archivaler {
+  rpc GetTapeInfo (TapeInfoRequest) returns (TapeInfoReply) {}
+  rpc PutObject (PutObjectReqeust) returns (PutObjectReply) {}
+  rpc GetDmStatus (Empty) returns (DmStatus) {}
+  rpc GetPoolsInfo (Empty) returns (PoolsInfo) {}
+  rpc GetDriversInfo (Empty) returns (DriversInfo) {}
+  rpc GetTapesInfo (Empty) returns (TapesInfo) {}
+  rpc CreatePool (PoolName) returns (ReplyMsg) {}
+  rpc DeletePool (PoolName) returns (ReplyMsg) {}
+  rpc Migrate (MigrateRequest) returns (MigrationStatus) {}
+  rpc Recall (RecallRequest) returns (MigrationStatus) {}
+  rpc Retrieve (Empty) returns (ReplyMsg) {}
+  rpc MigrateAsync (MigrateRequest) returns (MigrationStatus) {}
+  rpc RecallAsync (RecallRequest) returns (MigrationStatus) {}
+  rpc GetAsyncStatus (AsyncStatusRequest) returns (MigrationStatus) {}
+  rpc GetFileInfo (FileInfoRequest) returns (FileInfo) {}
+}
+
+message Empty {
+
+}
+
+message TapeInfoRequest {
+  string name = 1;
+}
+
+message TapeInfoReply {
+  string info = 1;
+}
+
+message PutObjectReqeust {
+  bool islocal = 1;
+  string srcpath = 2;
+  int32 size = 3;
+  bytes binary = 4;
+}
+
+message PutObjectReply {
+  string despath = 1;
+}
+
+message DmStatus {
+  bool running = 1;
+  int64 pid = 2;
+}
+
+message PoolName {
+  string name = 1;
+}
+
+message PoolInfo {
+  string poolName = 1;
+  uint64 total = 2;
+  uint64 free = 3;
+  uint64 unref = 4;
+  uint64 numtapes = 5;
+}
+
+message PoolsInfo {
+  repeated PoolInfo pools = 1;
+}
+
+message DriverInfo {
+  string id = 1;
+  string devName = 2;
+  uint64 slot = 3;
+  string status = 4;
+  bool busy = 5;
+}
+
+message DriversInfo {
+  repeated DriverInfo drivers = 1;
+}
+
+message TapeInfo {
+  string id = 1;
+  uint64 slot = 2;
+  uint64 totalcap = 3;
+  uint64 remaincap = 4;
+  uint64 reclaimable = 5;
+  string status = 6;
+  uint64 inprogress = 7;
+  string pool =8;
+  string state = 9;
+}
+
+message TapesInfo {
+  repeated TapeInfo tapes = 1;
+}
+
+message ReplyMsg {
+  int32 errorCode = 1;
+  string errorMsg = 2;
+}
+
+message MigrateRequest {
+  string poolName = 1;
+  repeated string files = 2;
+  bool premigrate = 3;
+}
+
+message RecallRequest {
+  bool resident = 1;
+  repeated string files = 2;
+}
+
+message MigrationStatus {
+  bool success = 1;
+  int64 reqNumber = 2;
+  int64 pid = 3;
+  int64 resident = 4;
+  int64 transferred = 5;
+  int64 premigrated = 6;
+  int64 migrated = 7;
+  int64 failed = 8;
+  bool done = 9;
+}
+
+message AsyncStatusRequest {
+  uint64 reqNumber = 1;
+}
+
+message FileInfo {
+  string migState = 1;
+  string fileName = 2;
+  uint64 size = 3;
+  uint64 blocks = 4;
+  uint64 fsidh = 5;
+  uint64 fsidl = 6;
+  uint64 igen = 7;
+  uint64 inum = 8;
+  string tapeId = 9;
+  uint64 startBlock = 10;
+}
+
+message FileInfoRequest {
+  string fileName = 1;
+}
