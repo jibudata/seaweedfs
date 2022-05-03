@@ -5,10 +5,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 // VolumeTierMoveDatToRemote copy dat file to a remote tier
@@ -80,6 +80,7 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 		FileSize:     uint64(size),
 		ModifiedTime: uint64(time.Now().Unix()),
 		Extension:    ".dat",
+		RemoteInfo:   backendStorage.GetRemoteInfo(),
 	})
 
 	if err := v.SaveVolumeInfo(); err != nil {

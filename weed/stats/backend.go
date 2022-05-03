@@ -39,7 +39,7 @@ func NewArchivalBackendStatus(addr string, pool string) (backend *volume_server_
 		return
 	} else {
 		pool, found := front.GetPoolInfo(pool)
-		if(found) {
+		if found {
 			backend.All = pool.Total * 1024 * 1024
 			backend.Free = pool.Free * 1024 * 1024
 			backend.Used = backend.All - backend.Free
