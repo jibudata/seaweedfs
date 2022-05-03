@@ -108,6 +108,10 @@ func (s *S3BackendStorage) DeleteFile(key string) (err error) {
 	return
 }
 
+func (s *S3BackendStorage) GetRemoteInfo() (remoteInfo string) {
+	return ""
+}
+
 type S3BackendStorageFile struct {
 	backendStorage *S3BackendStorage
 	key            string

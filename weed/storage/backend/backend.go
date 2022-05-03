@@ -28,6 +28,7 @@ type BackendStorage interface {
 	CopyFile(fullpath string, f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error)
 	DownloadFile(fileName string, key string, fn func(progressed int64, percentage float32) error) (size int64, err error)
 	DeleteFile(key string) (err error)
+	GetRemoteInfo() string
 }
 
 type StringProperties interface {

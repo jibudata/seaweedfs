@@ -224,6 +224,10 @@ func (s *FuseBackendStorage) DeleteFile(key string) (err error) {
 	return
 }
 
+func (s *FuseBackendStorage) GetRemoteInfo() (remoteInfo string) {
+	return ""
+}
+
 // Implement BackendStorageFile interface
 type FuseBackendStorageFile struct {
 	volDataFile string

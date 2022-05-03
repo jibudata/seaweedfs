@@ -450,6 +450,7 @@ message RemoteFile {
     uint64 file_size = 5;
     uint64 modified_time = 6;
     string extension = 7;
+    string remoteInfo = 8;
 }
 message VolumeInfo {
     repeated RemoteFile files = 1;

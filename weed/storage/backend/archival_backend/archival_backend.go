@@ -5,11 +5,12 @@ import (
 	"os"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	pb "github.com/chrislusf/seaweedfs/weed/storage/backend/archival_backend/archival_api"
+	"github.com/golang/protobuf/proto"
+	"github.com/google/uuid"
 )
 
 func init() {
@@ -37,14 +38,15 @@ func (f *ArchivalBackendFactory) BuildStorage(conf backend.StringProperties, con
 type ArchivalBackendStorage struct {
 	id              string
 	addr            string
-	pool			string
+	pool            string
 	managedFsStatus string
+	remoteInfo      string
 }
 
 func newArchivalBackendStorage(conf backend.StringProperties, configPrefix string, id string) (s *ArchivalBackendStorage, err error) {
 
 	f := &ArchivalBackendStorage{
-		id:     id,
+		id:   id,
 		addr: conf.GetString(configPrefix + "addr"),
 		pool: conf.GetString(configPrefix + "pool"),
 	}
@@ -84,7 +86,7 @@ func (s *ArchivalBackendStorage) CopyFile(fullpath string, f *os.File, fn func(p
 	}
 
 	reqNumber, err := front.MigrateAsync(fullpath, s.pool)
-	if(err != nil) {
+	if err != nil {
 		glog.V(1).Infof("MigrateAsync failed")
 		return "Failed", 0, err
 	}
@@ -95,15 +97,16 @@ func (s *ArchivalBackendStorage) CopyFile(fullpath string, f *os.File, fn func(p
 			return "failed", 0, err
 		}
 		fn(status.Migrated, (float32)(status.Migrated))
-		if(status.Done) {
+		if status.Done {
 			break
 		}
 	}
-	fileinfo, err := front.GetFileInfo(fullpath)
-	if( err != nil) {
+	fileinfo, err := front.GetRawFileInfo(fullpath)
+	if err != nil {
 		glog.V(1).Infof("GetFileInfo failed")
 		return "failed", 0, err
 	}
+	s.remoteInfo = proto.MarshalTextString(fileinfo)
 	return "Success", int64(fileinfo.Size), nil
 }
 
@@ -114,7 +117,7 @@ func (s *ArchivalBackendStorage) DownloadFile(fileName, key string, fn func(prog
 	}
 
 	reqNumber, err := front.RecallAsync(fileName, true)
-	if(err != nil) {
+	if err != nil {
 		glog.V(1).Infof("RecallAsync failed")
 		return 0, err
 	}
@@ -125,12 +128,12 @@ func (s *ArchivalBackendStorage) DownloadFile(fileName, key string, fn func(prog
 			return 0, err
 		}
 		fn(status.Migrated, (float32)(status.Migrated))
-		if(status.Done) {
+		if status.Done {
 			break
 		}
 	}
 	fileinfo, err := front.GetFileInfo(fileName)
-	if( err != nil) {
+	if err != nil {
 		glog.V(1).Infof("GetFileInfo failed")
 		return 0, err
 	}
@@ -139,6 +142,11 @@ func (s *ArchivalBackendStorage) DownloadFile(fileName, key string, fn func(prog
 
 func (s *ArchivalBackendStorage) DeleteFile(key string) (err error) {
 	return
+}
+
+func (s *ArchivalBackendStorage) GetRemoteInfo() (remoteInfo string) {
+	remoteInfo = s.remoteInfo
+	return s.remoteInfo
 }
 
 // Implement BackendStorageFile interface
@@ -151,11 +159,11 @@ type ArchivalBackendStorageFile struct {
 
 func (f ArchivalBackendStorageFile) ReadAt(p []byte, off int64) (n int, err error) {
 	_, e := f.backend.DownloadFile(f.destFile, "", nil)
-	if(e != nil) {
+	if e != nil {
 		return 0, e
 	}
 	file, ef := os.Open(f.destFile)
-	if(ef != nil) {
+	if ef != nil {
 		return 0, ef
 	}
 	n, err = file.ReadAt(p, off)

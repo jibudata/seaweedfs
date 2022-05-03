@@ -25,6 +25,7 @@ type VolumeInfo struct {
 	ModifiedAtSecond  int64
 	RemoteStorageName string
 	RemoteStorageKey  string
+	RemoteStorageInfo string
 }
 
 func NewVolumeInfo(m *master_pb.VolumeInformationMessage) (vi VolumeInfo, err error) {
