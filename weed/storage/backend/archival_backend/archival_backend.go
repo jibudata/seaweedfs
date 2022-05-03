@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
@@ -75,7 +76,8 @@ func (s *ArchivalBackendStorage) NewStorageFile(volFileName, key string, tierInf
 
 func (s *ArchivalBackendStorage) CopyFile(fullpath string, f *os.File, fn func(progressed int64, percentage float32) error) (key string, size int64, err error) {
 	glog.V(1).Infof("copying dat file of %s to archival %s as %s", fullpath, s.pool, key)
-
+	randomUuid, _ := uuid.NewRandom()
+	key = randomUuid.String()
 	front, err := pb.NewFrontApi(s.addr)
 	if err != nil {
 		glog.V(1).Infof("New Front Api failed")
