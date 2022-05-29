@@ -179,14 +179,14 @@ func (s *ArchivalBackendStorage) SaveRemoteInfoToDataBase(datacenter string, rac
 	db, e := sql.Open("mysql", sqlUrl)
 	if e != nil {
 		glog.V(0).Infof("Open mysql failed with error:%s", e)
-		return e;
+		return e
 	}
 	db.SetMaxIdleConns(2)
 	db.SetMaxOpenConns(100)
 	db.SetConnMaxLifetime(time.Duration(0) * time.Second)
 	if e = db.Ping(); e != nil {
 		glog.V(0).Infof("Ping failed with error:%s", e)
-		return e;
+		return e
 	}
 	defer db.Close()
 
@@ -206,9 +206,9 @@ func (s *ArchivalBackendStorage) SaveRemoteInfoToDataBase(datacenter string, rac
 	_, e = db.Exec(insertCmd)
 	if e != nil {
 		glog.V(0).Infof("Insert failed with error:%s", e)
-		return e;
+		return e
 	}
-	return nil;
+	return nil
 }
 
 // Implement BackendStorageFile interface
