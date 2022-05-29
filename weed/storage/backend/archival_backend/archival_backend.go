@@ -65,28 +65,6 @@ func newArchivalBackendStorage(conf backend.StringProperties, configPrefix strin
 		sqltable: conf.GetString(configPrefix + "sqltable"),
 	}
 	glog.V(0).Infof("create archival backend storage,id: archival.%s, root path: %s", id, f.addr)
-
-	// sqlUrl := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", f.sqluser, f.sqlpswd, f.sqlhost, f.sqlport, f.sqldb)
-	// glog.V(0).Infof("Open mysql with url:%s", sqlUrl)
-	// db, eee := sql.Open("mysql", sqlUrl)
-	// if eee != nil {
-	// 	glog.V(0).Infof("Open mysql failed with error:%s", eee)
-	// }
-	// db.SetMaxIdleConns(2)
-	// db.SetMaxOpenConns(100)
-	// db.SetConnMaxLifetime(time.Duration(0) * time.Second)
-	// if err := db.Ping(); err != nil {
-	// 	glog.V(0).Infof("Ping failed with error:%s", err)
-	// 	return f, err
-	// }
-	// defer db.Close()
-
-	// createCmd := fmt.Sprintf("CREATE TABLE IF NOT EXISTS volumeinfos(ID INT PRIMARY KEY AUTO_INCREMENT, data_center text, rack text, public_url text, volume_id text, volume_info text)")
-	// glog.V(0).Infof("create cmd:%s", createCmd)
-	// _, e := db.Exec(createCmd)
-	// if e != nil {
-	// 	glog.V(0).Infof("Create table failed with error:", e)
-	// }
 	return f, nil
 }
 
