@@ -195,7 +195,7 @@ func (f *FrontApi) GetFileInfo(fileName string) (FileInfo, error) {
 }
 
 func (f *FrontApi) GetRawFileInfo(fileName string) (fileInfo *pb.FileInfo, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(300)*time.Second)
 	defer cancel()
 	fileInfo, err = f.c.GetFileInfo(ctx, &pb.FileInfoRequest{FileName: fileName})
 	return fileInfo, err

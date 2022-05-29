@@ -29,6 +29,7 @@ type BackendStorage interface {
 	DownloadFile(fileName string, key string, fn func(progressed int64, percentage float32) error) (size int64, err error)
 	DeleteFile(key string) (err error)
 	GetRemoteInfo() string
+	SaveRemoteInfoToDataBase(datacenter string, rack string, publicUrl string) (err error)
 }
 
 type StringProperties interface {

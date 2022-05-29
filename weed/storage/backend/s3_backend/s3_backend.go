@@ -112,6 +112,10 @@ func (s *S3BackendStorage) GetRemoteInfo() (remoteInfo string) {
 	return ""
 }
 
+func (s *S3BackendStorage) SaveRemoteInfoToDataBase(datacenter string, rack string, publicUrl string) (err error) {
+	return nil;
+}
+
 type S3BackendStorageFile struct {
 	backendStorage *S3BackendStorage
 	key            string
