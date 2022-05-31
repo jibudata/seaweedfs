@@ -84,7 +84,7 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 	})
 
 	glog.V(0).Infof("start save volume info to db remote info:%s", backendStorage.GetRemoteInfo())
-	backendStorage.SaveRemoteInfoToDataBase(vs.dataCenter, vs.rack, vs.store.PublicUrl)
+	backendStorage.SaveRemoteInfoToDataBase(vs.dataCenter, vs.rack, vs.store.PublicUrl, uint32(v.Id))
 
 	if err := v.SaveVolumeInfo(); err != nil {
 		return fmt.Errorf("volume %d fail to save remote file info: %v", v.Id, err)

@@ -173,7 +173,7 @@ func (s *ArchivalBackendStorage) GetRemoteInfo() (remoteInfo string) {
 	return s.remoteInfo
 }
 
-func (s *ArchivalBackendStorage) SaveRemoteInfoToDataBase(datacenter string, rack string, publicUrl string) (err error) {
+func (s *ArchivalBackendStorage) SaveRemoteInfoToDataBase(datacenter string, rack string, publicUrl string, volumeId uint32) (err error) {
 	sqlUrl := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", s.sqluser, s.sqlpswd, s.sqlhost, s.sqlport, s.sqldb)
 	glog.V(0).Infof("open cmd:%s", sqlUrl)
 	db, e := sql.Open("mysql", sqlUrl)
@@ -197,10 +197,10 @@ func (s *ArchivalBackendStorage) SaveRemoteInfoToDataBase(datacenter string, rac
 		glog.V(0).Infof("Create table failed with error:", e)
 	}
 
-	insertCmd := fmt.Sprintf("INSERT INTO %s (data_center, rack, public_url, volume_id, volume_info) VALUES ('%s', '%s', '%s', '%s', '%s')", s.sqltable, datacenter, rack, publicUrl, s.id, s.remoteInfo)
+	insertCmd := fmt.Sprintf("INSERT INTO %s (data_center, rack, public_url, volume_id, volume_info) VALUES ('%s', '%s', '%s', '%d', '%s')", s.sqltable, datacenter, rack, publicUrl, volumeId, s.remoteInfo)
 	if s.remoteInfo == "" {
 		glog.V(0).Infof("Null remote info, delete the remote info in the data base")
-		insertCmd = fmt.Sprintf("DELETE FROM %s WHERE data_center='%s' AND rack='%s' AND public_url='%s' AND volume_id='%s'", s.sqltable, datacenter, rack, publicUrl, s.id)
+		insertCmd = fmt.Sprintf("DELETE FROM %s WHERE data_center='%s' AND rack='%s' AND public_url='%s' AND volume_id='%s'", s.sqltable, datacenter, rack, publicUrl, volumeId)
 	}
 	glog.V(0).Infof("Insert cmd:%s", insertCmd)
 	_, e = db.Exec(insertCmd)

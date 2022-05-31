@@ -63,7 +63,7 @@ func (vs *VolumeServer) VolumeTierMoveDatFromRemote(req *volume_server_pb.Volume
 		return fmt.Errorf("backend %s download file %s failed with error: %v", storageName, v.FileName(".dat"), err)
 	}
 
-	backendStorage.SaveRemoteInfoToDataBase(vs.dataCenter, vs.rack, vs.store.PublicUrl)
+	backendStorage.SaveRemoteInfoToDataBase(vs.dataCenter, vs.rack, vs.store.PublicUrl, uint32(v.Id))
 
 	if req.KeepRemoteDatFile {
 		return nil
