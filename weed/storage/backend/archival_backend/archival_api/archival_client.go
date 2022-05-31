@@ -6,8 +6,8 @@ import (
 	"os"
 	"time"
 
-	"google.golang.org/grpc"
 	pb "github.com/chrislusf/seaweedfs/weed/pb/archival"
+	"google.golang.org/grpc"
 )
 
 type FrontApi struct {
@@ -24,26 +24,26 @@ type Pool struct {
 }
 
 type AsyncStatus struct {
-	ReqNumber uint64
-	Success bool
-	Done bool
-	Resident int64
+	ReqNumber   uint64
+	Success     bool
+	Done        bool
+	Resident    int64
 	Transferred int64
 	Premigrated int64
-	Migrated int64
-	Failed int64
+	Migrated    int64
+	Failed      int64
 }
 
 type FileInfo struct {
-	MigState string
-	FileName string
-	Size uint64
-	Blocks uint64
-	Fsidh uint64
-	Fsidl uint64
-	Igen  uint64
-	Inum  uint64
-	TapeId string
+	MigState   string
+	FileName   string
+	Size       uint64
+	Blocks     uint64
+	Fsidh      uint64
+	Fsidl      uint64
+	Igen       uint64
+	Inum       uint64
+	TapeId     string
 	StartBlock uint64
 }
 
@@ -173,23 +173,30 @@ func (f *FrontApi) GetAsyncStatus(reqNumber uint64) (AsyncStatus, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
 	defer cancel()
 	status, err := f.c.GetAsyncStatus(ctx, &pb.AsyncStatusRequest{ReqNumber: reqNumber})
-	if(err != nil) {
+	if err != nil {
 		log.Fatalf("could not get async status: %v", err)
 		return AsyncStatus{}, err
 	}
 	return AsyncStatus{ReqNumber: reqNumber, Success: status.Success, Resident: status.Resident,
-		Transferred:status.Resident, Premigrated: status.Premigrated, Migrated: status.Migrated, Failed: status.Failed, Done: status.Done}, err
+		Transferred: status.Resident, Premigrated: status.Premigrated, Migrated: status.Migrated, Failed: status.Failed, Done: status.Done}, err
 }
 
 func (f *FrontApi) GetFileInfo(fileName string) (FileInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(30)*time.Second)
 	defer cancel()
 	fileInfo, err := f.c.GetFileInfo(ctx, &pb.FileInfoRequest{FileName: fileName})
-	if(err != nil) {
+	if err != nil {
 		log.Fatalf("Get file info failed with err: %v", err)
 		return FileInfo{}, err
 	}
 	return FileInfo{MigState: fileInfo.MigState, FileName: fileInfo.FileName, Size: fileInfo.Size, Blocks: fileInfo.Blocks,
-	Fsidh: fileInfo.Fsidh, Fsidl: fileInfo.Fsidl, Igen: fileInfo.Igen, Inum: fileInfo.Inum, TapeId: fileInfo.TapeId,
-	StartBlock: fileInfo.StartBlock}, err
+		Fsidh: fileInfo.Fsidh, Fsidl: fileInfo.Fsidl, Igen: fileInfo.Igen, Inum: fileInfo.Inum, TapeId: fileInfo.TapeId,
+		StartBlock: fileInfo.StartBlock}, err
+}
+
+func (f *FrontApi) GetRawFileInfo(fileName string) (fileInfo *pb.FileInfo, err error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(300)*time.Second)
+	defer cancel()
+	fileInfo, err = f.c.GetFileInfo(ctx, &pb.FileInfoRequest{FileName: fileName})
+	return fileInfo, err
 }

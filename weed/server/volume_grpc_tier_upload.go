@@ -5,10 +5,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/chrislusf/seaweedfs/weed/glog"
 	"github.com/chrislusf/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/chrislusf/seaweedfs/weed/storage/backend"
 	"github.com/chrislusf/seaweedfs/weed/storage/needle"
-	"github.com/chrislusf/seaweedfs/weed/glog"
 )
 
 // VolumeTierMoveDatToRemote copy dat file to a remote tier
@@ -65,10 +65,10 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 
 	// copy the data file
 	fullName := v.FileName(".dat")
-	glog.V(0).Infof("start copying file: %s", fullName, " to backend type:%s", backendType)
+	glog.V(0).Infof("start copying file: %s to backend type:%s", fullName, backendType)
 	key, size, err := backendStorage.CopyFile(fullName, diskFile.File, fn)
 	if err != nil {
-		return fmt.Errorf("backend %s copy file %s: %v", req.DestinationBackendName, diskFile.Name(), err)
+		return fmt.Errorf("backend %s copy file %s failed with error: %v", req.DestinationBackendName, diskFile.Name(), err)
 	}
 
 	// save the remote file to volume tier info
@@ -80,7 +80,11 @@ func (vs *VolumeServer) VolumeTierMoveDatToRemote(req *volume_server_pb.VolumeTi
 		FileSize:     uint64(size),
 		ModifiedTime: uint64(time.Now().Unix()),
 		Extension:    ".dat",
+		RemoteInfo:   backendStorage.GetRemoteInfo(),
 	})
+
+	glog.V(0).Infof("start save volume info to db remote info:%s", backendStorage.GetRemoteInfo())
+	backendStorage.SaveRemoteInfoToDataBase(vs.dataCenter, vs.rack, vs.store.PublicUrl, uint32(v.Id))
 
 	if err := v.SaveVolumeInfo(); err != nil {
 		return fmt.Errorf("volume %d fail to save remote file info: %v", v.Id, err)
