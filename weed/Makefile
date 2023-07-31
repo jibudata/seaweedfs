@@ -9,6 +9,15 @@ all: install
 install:
 	go install
 
+build: fmt vet
+	go build -v -gcflags="all=-N -l" -o bin/weed
+
+fmt:
+	go fmt ./...
+
+vet:
+	go vet ./...
+
 clean:
 	go clean $(SOURCE_DIR)
 	rm -f $(BINARY)
