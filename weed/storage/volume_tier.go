@@ -4,6 +4,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
+	_ "github.com/seaweedfs/seaweedfs/weed/storage/backend/archival_backend"
 	_ "github.com/seaweedfs/seaweedfs/weed/storage/backend/rclone_backend"
 	_ "github.com/seaweedfs/seaweedfs/weed/storage/backend/s3_backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -65,7 +66,7 @@ func (v *Volume) LoadRemoteFile() error {
 		v.DataBackend.Close()
 	}
 
-	v.DataBackend = backendStorage.NewStorageFile(tierFile.Key, v.volumeInfo)
+	v.DataBackend = backendStorage.NewStorageFile(v.DataFileName(), tierFile.Key, v.volumeInfo)
 	return nil
 }
 

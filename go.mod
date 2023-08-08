@@ -3,7 +3,7 @@ module github.com/seaweedfs/seaweedfs
 go 1.20
 
 require (
-	cloud.google.com/go v0.110.2 // indirect
+	cloud.google.com/go v0.110.4 // indirect
 	cloud.google.com/go/pubsub v1.32.0
 	cloud.google.com/go/storage v1.31.0
 	github.com/Azure/azure-pipeline-go v0.2.3
@@ -123,8 +123,8 @@ require (
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	google.golang.org/api v0.131.0
 	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/genproto v0.0.0-20230629202037-9506855d4529 // indirect
-	google.golang.org/grpc v1.56.2
+	google.golang.org/genproto v0.0.0-20230726155614-23370e0ffb3e // indirect
+	google.golang.org/grpc v1.57.0
 	google.golang.org/protobuf v1.31.0
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	modernc.org/b v1.0.0 // indirect
@@ -152,6 +152,7 @@ require (
 	github.com/hanwen/go-fuse/v2 v2.3.0
 	github.com/hashicorp/raft v1.5.0
 	github.com/hashicorp/raft-boltdb/v2 v2.2.2
+	github.com/jibudata/archive-api v0.0.0-20230805145551-69592155e24c
 	github.com/puzpuzpuz/xsync/v2 v2.4.1
 	github.com/rabbitmq/amqp091-go v1.8.1
 	github.com/rclone/rclone v1.63.0
@@ -160,12 +161,13 @@ require (
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.2.0
 	github.com/ydb-platform/ydb-go-sdk/v3 v3.48.5
 	google.golang.org/grpc/security/advancedtls v0.0.0-20220622233350-5cdb09fa29c1
+	k8s.io/apimachinery v0.26.2
 )
 
 require (
 	cloud.google.com/go/compute v1.20.1 // indirect
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
-	cloud.google.com/go/iam v1.1.0 // indirect
+	cloud.google.com/go/iam v1.1.1 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.6.1 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.3.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.3.0 // indirect
@@ -208,7 +210,11 @@ require (
 	github.com/gabriel-vasile/mimetype v1.4.2 // indirect
 	github.com/geoffgarside/ber v1.1.0 // indirect
 	github.com/go-chi/chi/v5 v5.0.8 // indirect
+	github.com/go-kratos/aegis v0.2.0 // indirect
+	github.com/go-kratos/kratos/v2 v2.6.3 // indirect
+	github.com/go-logr/logr v1.2.4 // indirect
 	github.com/go-ole/go-ole v1.2.6 // indirect
+	github.com/go-playground/form/v4 v4.2.0 // indirect
 	github.com/gofrs/flock v0.8.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.0 // indirect
@@ -236,7 +242,7 @@ require (
 	github.com/koofr/go-koofrclient v0.0.0-20221207135200-cbd7fc9ad6a6 // indirect
 	github.com/kr/fs v0.1.0 // indirect
 	github.com/kylelemons/godebug v1.1.0 // indirect
-	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
+	github.com/lufia/plan9stats v0.0.0-20230110061619-bbe2e5e100de // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-runewidth v0.0.14 // indirect
 	github.com/mattn/go-sqlite3 v2.0.1+incompatible // indirect
@@ -262,7 +268,7 @@ require (
 	github.com/pkg/browser v0.0.0-20210911075715-681adbf594b8 // indirect
 	github.com/pkg/sftp v1.13.6-0.20230213180117-971c283182b6 // indirect
 	github.com/pkg/xattr v0.4.9 // indirect
-	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
+	github.com/power-devops/perfstat v0.0.0-20221212215047-62379fc7944b // indirect
 	github.com/putdotio/go-putio/putio v0.0.0-20200123120452-16d982cac2b8 // indirect
 	github.com/rclone/ftp v0.0.0-20230327202000-dadc1f64e87d // indirect
 	github.com/rfjakob/eme v1.1.2 // indirect
@@ -280,7 +286,7 @@ require (
 	github.com/tinylib/msgp v1.1.6 // indirect
 	github.com/tklauser/go-sysconf v0.3.11 // indirect
 	github.com/tklauser/numcpus v0.6.0 // indirect
-	github.com/twmb/murmur3 v1.1.3 // indirect
+	github.com/twmb/murmur3 v1.1.6 // indirect
 	github.com/vivint/infectious v0.0.0-20200605153912-25a574ae18a3 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	github.com/yandex-cloud/go-genproto v0.0.0-20211115083454-9ca41db5ed9e // indirect
@@ -301,12 +307,14 @@ require (
 	golang.org/x/sync v0.3.0 // indirect
 	golang.org/x/term v0.10.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20230629202037-9506855d4529 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20230706204954-ccb25ca9f130 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20230803162519-f966b187b2e5 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20230731190214-cbb8c96f2d6d // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	k8s.io/klog/v2 v2.90.1 // indirect
+	k8s.io/utils v0.0.0-20230308161112-d77c459e9343 // indirect
 	lukechampine.com/uint128 v1.2.0 // indirect
 	storj.io/common v0.0.0-20221123115229-fed3e6651b63 // indirect
 	storj.io/drpc v0.0.32 // indirect
