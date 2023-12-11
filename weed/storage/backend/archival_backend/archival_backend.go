@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	RecallTimeout = 30 * time.Minute
-	RecallInerval = 10 * time.Second
+	RecallTimeout  = 30 * time.Minute
+	RecallInterval = 10 * time.Second
 )
 
 func init() {
@@ -112,7 +112,7 @@ func (s *ArchivalBackendStorage) CopyFile(f *os.File, fn func(progressed int64, 
 			return
 		}
 
-	}, RecallInerval)
+	}, RecallInterval)
 
 	if err1 != nil {
 		return key, 0, err1
