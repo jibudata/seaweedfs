@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/emptypb"
 
-	pb "github.com/seaweedfs/seaweedfs/weed/storage/backend/udm/api"
+	pb "github.com/seaweedfs/seaweedfs/weed/storage/backend/udm/api/v1"
 )
 
 type server struct {

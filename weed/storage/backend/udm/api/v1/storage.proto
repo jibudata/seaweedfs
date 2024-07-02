@@ -1,10 +1,10 @@
 syntax = "proto3";
 
-package udm.v1;
+package weed.v1;
 
 import "google/protobuf/empty.proto";
 
-option go_package = "github.com/seaweedfs/seaweedfs/weed/storage/backend/udm;udm";
+option go_package = "github.com/seaweedfs/seaweedfs/weed/storage/backend/udm/v1;v1";
 
 service UDMStorage {
   rpc UploadFile (FileRequest) returns (stream FileInfo) {
@@ -36,15 +36,4 @@ message FileInfo {
 
 message CacheFileReply {
   string cache_file = 1;
-}
-
-message ReadRequest {
-  string key = 1;
-  int64 offset = 2;
-  int64 length = 3;
-}
-
-message ReadReply {
-  bytes data = 1;
-  int64 total_bytes = 2;
 }
