@@ -4,6 +4,7 @@ COPY  ./weed_pub* /usr/bin/
 COPY  ./weed_sub* /usr/bin/
 RUN mkdir -p /etc/seaweedfs
 COPY ./filer_mysql.toml /etc/seaweedfs/filer.toml
+COPY ./master-udm.toml /etc/seaweedfs/master.toml
 COPY ./entrypoint.sh /entrypoint.sh
 RUN apk add fuse # for weed mount
 RUN apk add curl # for health checks
