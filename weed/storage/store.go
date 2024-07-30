@@ -229,6 +229,7 @@ func collectStatForOneVolume(vid needle.VolumeId, v *Volume) (s *VolumeInfo) {
 	s.DeleteCount = v.nm.DeletedCount()
 	s.DeletedByteCount = v.nm.DeletedSize()
 	s.Size = v.nm.ContentSize()
+	s.ModifiedAtSecond = int64(v.lastModifiedTsSeconds)
 
 	return
 }
