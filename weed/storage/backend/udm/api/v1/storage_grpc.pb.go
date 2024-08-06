@@ -38,7 +38,7 @@ func NewUDMStorageClient(cc grpc.ClientConnInterface) UDMStorageClient {
 }
 
 func (c *uDMStorageClient) UploadFile(ctx context.Context, in *FileRequest, opts ...grpc.CallOption) (UDMStorage_UploadFileClient, error) {
-	stream, err := c.cc.NewStream(ctx, &UDMStorage_ServiceDesc.Streams[0], "/weed.v1.UDMStorage/UploadFile", opts...)
+	stream, err := c.cc.NewStream(ctx, &UDMStorage_ServiceDesc.Streams[0], "/storage.v1.UDMStorage/UploadFile", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +70,7 @@ func (x *uDMStorageUploadFileClient) Recv() (*FileInfo, error) {
 }
 
 func (c *uDMStorageClient) DownloadFile(ctx context.Context, in *FileRequest, opts ...grpc.CallOption) (UDMStorage_DownloadFileClient, error) {
-	stream, err := c.cc.NewStream(ctx, &UDMStorage_ServiceDesc.Streams[1], "/weed.v1.UDMStorage/DownloadFile", opts...)
+	stream, err := c.cc.NewStream(ctx, &UDMStorage_ServiceDesc.Streams[1], "/storage.v1.UDMStorage/DownloadFile", opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +103,7 @@ func (x *uDMStorageDownloadFileClient) Recv() (*FileInfo, error) {
 
 func (c *uDMStorageClient) CacheFile(ctx context.Context, in *FileKey, opts ...grpc.CallOption) (*CacheFileReply, error) {
 	out := new(CacheFileReply)
-	err := c.cc.Invoke(ctx, "/weed.v1.UDMStorage/CacheFile", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/storage.v1.UDMStorage/CacheFile", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +112,7 @@ func (c *uDMStorageClient) CacheFile(ctx context.Context, in *FileKey, opts ...g
 
 func (c *uDMStorageClient) DeleteFile(ctx context.Context, in *FileKey, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	out := new(emptypb.Empty)
-	err := c.cc.Invoke(ctx, "/weed.v1.UDMStorage/DeleteFile", in, out, opts...)
+	err := c.cc.Invoke(ctx, "/storage.v1.UDMStorage/DeleteFile", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -211,7 +211,7 @@ func _UDMStorage_CacheFile_Handler(srv interface{}, ctx context.Context, dec fun
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/weed.v1.UDMStorage/CacheFile",
+		FullMethod: "/storage.v1.UDMStorage/CacheFile",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(UDMStorageServer).CacheFile(ctx, req.(*FileKey))
@@ -229,7 +229,7 @@ func _UDMStorage_DeleteFile_Handler(srv interface{}, ctx context.Context, dec fu
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/weed.v1.UDMStorage/DeleteFile",
+		FullMethod: "/storage.v1.UDMStorage/DeleteFile",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(UDMStorageServer).DeleteFile(ctx, req.(*FileKey))
@@ -241,7 +241,7 @@ func _UDMStorage_DeleteFile_Handler(srv interface{}, ctx context.Context, dec fu
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
 var UDMStorage_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "weed.v1.UDMStorage",
+	ServiceName: "storage.v1.UDMStorage",
 	HandlerType: (*UDMStorageServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
