@@ -3,7 +3,6 @@ package udm
 import (
 	"context"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -57,8 +56,6 @@ func (s *BackendStorage) ToProperties() map[string]string {
 }
 
 func (s *BackendStorage) NewStorageFile(key string, tierInfo *volume_server_pb.VolumeInfo) backend.BackendStorageFile {
-	key = strings.TrimPrefix(key, "/")
-
 	f := &backendStorageFile{
 		backendStorage: s,
 		key:            key,
