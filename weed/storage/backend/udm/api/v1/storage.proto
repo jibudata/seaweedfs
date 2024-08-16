@@ -16,6 +16,9 @@ service UDMStorage {
   rpc CacheFile (FileKey) returns (CacheFileReply) {
   }
 
+  rpc ReadSuperBlock (FileKey) returns (ReadSuperBlockReply) {
+  }
+
   rpc DeleteFile (FileKey) returns (google.protobuf.Empty) {
   }
 }
@@ -36,4 +39,8 @@ message FileInfo {
 
 message CacheFileReply {
   string cache_file = 1;
+}
+
+message ReadSuperBlockReply {
+  bytes data = 1;
 }
