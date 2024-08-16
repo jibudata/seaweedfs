@@ -127,6 +127,10 @@ func (cs *ClientSet) DeleteFile(ctx context.Context, key string) error {
 }
 
 func (cs *ClientSet) ReadAt(ctx context.Context, key string, offset, length int64) ([]byte, error) {
+	if isSuperBlock(offset, length) {
+		return cs.ReadSuperBlock(ctx, key)
+	}
+
 	res, err := cs.storageClient.CacheFile(ctx, &pb.FileKey{
 		Key: key,
 	})
@@ -148,4 +152,21 @@ func (cs *ClientSet) ReadAt(ctx context.Context, key string, offset, length int6
 	}
 
 	return buffer[:n], nil
+}
+
+func (cs *ClientSet) ReadSuperBlock(ctx context.Context, key string) ([]byte, error) {
+	res, err := cs.storageClient.ReadSuperBlock(ctx, &pb.FileKey{
+		Key: key,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return res.Data, nil
+}
+
+const superBlockSize = 8
+
+func isSuperBlock(offset, length int64) bool {
+	return offset == 0 && length == superBlockSize
 }

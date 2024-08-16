@@ -26,6 +26,7 @@ type UDMStorageClient interface {
 	UploadFile(ctx context.Context, in *FileRequest, opts ...grpc.CallOption) (UDMStorage_UploadFileClient, error)
 	DownloadFile(ctx context.Context, in *FileRequest, opts ...grpc.CallOption) (UDMStorage_DownloadFileClient, error)
 	CacheFile(ctx context.Context, in *FileKey, opts ...grpc.CallOption) (*CacheFileReply, error)
+	ReadSuperBlock(ctx context.Context, in *FileKey, opts ...grpc.CallOption) (*ReadSuperBlockReply, error)
 	DeleteFile(ctx context.Context, in *FileKey, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
@@ -110,6 +111,15 @@ func (c *uDMStorageClient) CacheFile(ctx context.Context, in *FileKey, opts ...g
 	return out, nil
 }
 
+func (c *uDMStorageClient) ReadSuperBlock(ctx context.Context, in *FileKey, opts ...grpc.CallOption) (*ReadSuperBlockReply, error) {
+	out := new(ReadSuperBlockReply)
+	err := c.cc.Invoke(ctx, "/storage.v1.UDMStorage/ReadSuperBlock", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *uDMStorageClient) DeleteFile(ctx context.Context, in *FileKey, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	out := new(emptypb.Empty)
 	err := c.cc.Invoke(ctx, "/storage.v1.UDMStorage/DeleteFile", in, out, opts...)
@@ -126,6 +136,7 @@ type UDMStorageServer interface {
 	UploadFile(*FileRequest, UDMStorage_UploadFileServer) error
 	DownloadFile(*FileRequest, UDMStorage_DownloadFileServer) error
 	CacheFile(context.Context, *FileKey) (*CacheFileReply, error)
+	ReadSuperBlock(context.Context, *FileKey) (*ReadSuperBlockReply, error)
 	DeleteFile(context.Context, *FileKey) (*emptypb.Empty, error)
 	mustEmbedUnimplementedUDMStorageServer()
 }
@@ -142,6 +153,9 @@ func (UnimplementedUDMStorageServer) DownloadFile(*FileRequest, UDMStorage_Downl
 }
 func (UnimplementedUDMStorageServer) CacheFile(context.Context, *FileKey) (*CacheFileReply, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CacheFile not implemented")
+}
+func (UnimplementedUDMStorageServer) ReadSuperBlock(context.Context, *FileKey) (*ReadSuperBlockReply, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReadSuperBlock not implemented")
 }
 func (UnimplementedUDMStorageServer) DeleteFile(context.Context, *FileKey) (*emptypb.Empty, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteFile not implemented")
@@ -219,6 +233,24 @@ func _UDMStorage_CacheFile_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _UDMStorage_ReadSuperBlock_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FileKey)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(UDMStorageServer).ReadSuperBlock(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/storage.v1.UDMStorage/ReadSuperBlock",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(UDMStorageServer).ReadSuperBlock(ctx, req.(*FileKey))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _UDMStorage_DeleteFile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(FileKey)
 	if err := dec(in); err != nil {
@@ -247,6 +279,10 @@ var UDMStorage_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CacheFile",
 			Handler:    _UDMStorage_CacheFile_Handler,
+		},
+		{
+			MethodName: "ReadSuperBlock",
+			Handler:    _UDMStorage_ReadSuperBlock_Handler,
 		},
 		{
 			MethodName: "DeleteFile",
