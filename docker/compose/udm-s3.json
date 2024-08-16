@@ -1,0 +1,103 @@
+{
+  "identities": [
+    {
+      "name": "anonymous",
+      "actions": [
+        "Read"
+      ]
+    },
+    {
+      "name": "admin",
+      "credentials": [
+        {
+          "accessKey": "udm_admin",
+          "secretKey": "udm_passw0rd"
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "List",
+        "Tagging",
+        "Write"
+      ]
+    },
+    {
+      "name": "s3_tests",
+      "credentials": [
+        {
+          "accessKey": "ABCDEFGHIJKLMNOPQRST",
+          "secretKey": "abcdefghijklmnopqrstuvwxyzabcdefghijklmn"
+        },
+        {
+          "accessKey": "0555b35654ad1656d804",
+          "secretKey": "h7GhxuBLTrlhVUyxSPUKUV8r/2EI4ngqJxD7iBdBYLhwluN30JaT3Q=="
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "List",
+        "Tagging",
+        "Write"
+      ],
+      "account": {
+        "id": "testid"
+      }
+    },
+    {
+      "name": "s3_tests_alt",
+      "credentials": [
+        {
+          "accessKey": "NOPQRSTUVWXYZABCDEFG",
+          "secretKey": "nopqrstuvwxyzabcdefghijklmnabcdefghijklm"
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "List",
+        "Tagging",
+        "Write"
+      ]
+    },
+    {
+      "name": "s3_tests_tenant",
+      "credentials": [
+        {
+          "accessKey": "HIJKLMNOPQRSTUVWXYZA",
+          "secretKey": "opqrstuvwxyzabcdefghijklmnopqrstuvwxyzab"
+        }
+      ],
+      "actions": [
+        "Admin",
+        "Read",
+        "List",
+        "Tagging",
+        "Write"
+      ]
+    },
+    {
+      "name": "udm_user1",
+      "credentials": [
+        {
+          "accessKey": "udm_user1",
+          "secretKey": "udm_passw0rd1"
+        }
+      ],
+      "actions": [
+        "Read",
+        "List",
+        "Tagging",
+        "Write"
+      ]
+    }
+  ],
+  "accounts": [
+      {
+        "id" : "udm_test",
+        "displayName": "M. Tester",
+        "emailAddress": "tester@jibudata.com"
+      }
+    ]
+}
