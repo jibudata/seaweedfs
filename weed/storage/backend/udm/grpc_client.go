@@ -13,12 +13,13 @@ import (
 )
 
 type ClientSet struct {
-	conn *grpc.ClientConn
+	conn         *grpc.ClientConn
+	readDisabled bool
 
 	storageClient pb.UDMStorageClient
 }
 
-func NewClient(target string) (*ClientSet, error) {
+func NewClient(target string, readDisabled ...bool) (*ClientSet, error) {
 	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
 		return nil, err
@@ -27,6 +28,7 @@ func NewClient(target string) (*ClientSet, error) {
 	return &ClientSet{
 		conn:          conn,
 		storageClient: pb.NewUDMStorageClient(conn),
+		readDisabled:  len(readDisabled) > 0 && readDisabled[0],
 	}, nil
 }
 
@@ -129,6 +131,10 @@ func (cs *ClientSet) DeleteFile(ctx context.Context, key string) error {
 func (cs *ClientSet) ReadAt(ctx context.Context, key string, offset, length int64) ([]byte, error) {
 	if isSuperBlock(offset, length) {
 		return cs.ReadSuperBlock(ctx, key)
+	}
+
+	if cs.readDisabled {
+		return nil, fmt.Errorf("can not read %s at %d with length %d: read is disabled", key, offset, length)
 	}
 
 	res, err := cs.storageClient.CacheFile(ctx, &pb.FileKey{

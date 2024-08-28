@@ -2,7 +2,9 @@ package udm
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -27,15 +29,17 @@ func (factory *backendFactory) BuildStorage(configuration backend.StringProperti
 }
 
 type BackendStorage struct {
-	id         string
-	grpcServer string
-	client     *ClientSet
+	id           string
+	grpcServer   string
+	readDisabled bool
+	client       *ClientSet
 }
 
 func newBackendStorage(configuration backend.StringProperties, configPrefix string, id string) (*BackendStorage, error) {
 	grpcServer := configuration.GetString(configPrefix + "grpc_server")
+	readDisabled, _ := strconv.ParseBool(configuration.GetString(configPrefix + "read_disabled"))
 
-	cl, err := NewClient(grpcServer)
+	cl, err := NewClient(grpcServer, readDisabled)
 	if err != nil {
 		return nil, err
 	}
@@ -43,9 +47,10 @@ func newBackendStorage(configuration backend.StringProperties, configPrefix stri
 	glog.V(1).Infof("Adding backend storage: %s.%s", storageType, id)
 
 	return &BackendStorage{
-		id:         id,
-		client:     cl,
-		grpcServer: grpcServer,
+		id:           id,
+		client:       cl,
+		grpcServer:   grpcServer,
+		readDisabled: readDisabled,
 	}, nil
 }
 
@@ -123,7 +128,7 @@ func (f *backendStorageFile) ReadAt(p []byte, off int64) (n int, err error) {
 }
 
 func (f *backendStorageFile) WriteAt(p []byte, off int64) (n int, err error) {
-	panic("not implemented")
+	panic(fmt.Sprintf("Can not write %s at %d with length %d: not implemented", f.key, off, len(p)))
 }
 
 func (f *backendStorageFile) Truncate(off int64) error {
