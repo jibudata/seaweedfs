@@ -3,5 +3,18 @@
 [storage.backend]
 	[storage.backend.udm.tape]
 	enabled = true
-    grpc_server = "localhost:50051"
-    read_disabled = "false"
+	grpc_server = "localhost:50051"
+	read_disabled = "false"
+
+# create this number of logical volumes if no more writable volumes
+# count_x means how many copies of data.
+# e.g.:
+#   000 has only one copy, copy_1
+#   010 and 001 has two copies, copy_2
+#   011 has only 3 copies, copy_3
+[master.volume_growth]
+copy_1 = 10
+copy_2 = 8
+copy_3 = 6
+copy_other = 1
+threshold = 0.8
