@@ -44,11 +44,13 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	hasVolumeInfoFile := v.maybeLoadVolumeInfo()
 
 	if v.HasRemoteFile() {
-		v.noWriteCanDelete = true
-		v.noWriteOrDelete = false
+		v.canDelete = true
 		glog.V(0).Infof("loading volume %d from remote %v", v.Id, v.volumeInfo)
 		v.LoadRemoteFile()
 		alreadyHasSuperBlock = true
+		if !v.IsReadOnly() {
+			v.PersistReadOnly(true)
+		}
 	} else if exists, canRead, canWrite, modifiedTime, fileSize := util.CheckFile(v.FileName(".dat")); exists {
 		// open dat file
 		if !canRead {
@@ -60,7 +62,9 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		} else {
 			glog.V(0).Infof("opening %s in READONLY mode", v.FileName(".dat"))
 			dataFile, err = os.Open(v.FileName(".dat"))
-			v.noWriteOrDelete = true
+			if !v.IsReadOnly() {
+				v.PersistReadOnly(true)
+			}
 		}
 		v.lastModifiedTsSeconds = uint64(modifiedTime.Unix())
 		if fileSize >= super_block.SuperBlockSize {
@@ -112,7 +116,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			glog.Fatalf("check volume idx file %s: %v", v.FileName(".idx"), err)
 		}
 		var indexFile *os.File
-		if v.noWriteOrDelete {
+		if v.IsReadOnly() {
 			glog.V(0).Infoln("open to read file", v.FileName(".idx"))
 			if indexFile, err = os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644); err != nil {
 				return fmt.Errorf("cannot read Volume Index %s: %v", v.FileName(".idx"), err)
@@ -123,12 +127,13 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				return fmt.Errorf("cannot write Volume Index %s: %v", v.FileName(".idx"), err)
 			}
 		}
+		glog.V(0).Infof("checking volume data integrity for volume %d", v.Id)
 		if v.lastAppendAtNs, err = CheckAndFixVolumeDataIntegrity(v, indexFile); err != nil {
-			v.noWriteOrDelete = true
+			v.PersistReadOnly(true)
 			glog.V(0).Infof("volumeDataIntegrityChecking failed %v", err)
 		}
 
-		if v.noWriteOrDelete || v.noWriteCanDelete {
+		if v.canDelete {
 			if v.nm, err = NewSortedFileNeedleMap(v.IndexFileName(), indexFile); err != nil {
 				glog.V(0).Infof("loading sorted db %s error: %v", v.FileName(".sdx"), err)
 			}

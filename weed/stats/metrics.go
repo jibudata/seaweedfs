@@ -18,14 +18,13 @@ import (
 
 // Readonly volume types
 const (
-	Namespace        = "SeaweedFS"
-	IsReadOnly       = "IsReadOnly"
-	NoWriteOrDelete  = "noWriteOrDelete"
-	NoWriteCanDelete = "noWriteCanDelete"
-	IsDiskSpaceLow   = "isDiskSpaceLow"
+	Namespace      = "SeaweedFS"
+	IsReadOnly     = "IsReadOnly"
+	CanDelete      = "CanDelete"
+	IsDiskSpaceLow = "isDiskSpaceLow"
 )
 
-var readOnlyVolumeTypes = [4]string{IsReadOnly, NoWriteOrDelete, NoWriteCanDelete, IsDiskSpaceLow}
+var readOnlyVolumeTypes = [4]string{IsReadOnly, CanDelete, IsDiskSpaceLow}
 
 var (
 	Gather = prometheus.NewRegistry()

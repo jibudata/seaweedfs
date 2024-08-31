@@ -27,9 +27,8 @@ type Volume struct {
 	nm                 NeedleMapper
 	tmpNm              TempNeedleMapper
 	needleMapKind      NeedleMapKind
-	noWriteOrDelete    bool // if readonly, either noWriteOrDelete or noWriteCanDelete
-	noWriteCanDelete   bool // if readonly, either noWriteOrDelete or noWriteCanDelete
-	noWriteLock        sync.RWMutex
+	canDelete          bool
+	canDeleteLock      sync.RWMutex
 	hasRemoteFile      bool // if the volume has a remote file
 	MemoryMapMaxSizeMb uint32
 
@@ -48,8 +47,9 @@ type Volume struct {
 	isCompacting       bool
 	isCommitCompacting bool
 
-	volumeInfo *volume_server_pb.VolumeInfo
-	location   *DiskLocation
+	volumeInfo     *volume_server_pb.VolumeInfo
+	volumeInfoLock sync.RWMutex
+	location       *DiskLocation
 
 	lastIoError error
 }
@@ -61,15 +61,18 @@ func NewVolume(dirname string, dirIdx string, collection string, id needle.Volum
 	v.SuperBlock = super_block.SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
 	v.needleMapKind = needleMapKind
 	v.ldbTimeout = ldbTimeout
+	glog.Infof("NewVolume %s collection:%s id:%d", dirname, collection, id)
 	e = v.load(true, true, needleMapKind, preallocate)
+	glog.Infof("NewVolume load complete %s collection:%s id:%d", dirname, collection, id)
 	v.startWorker()
+	glog.Infof("NewVolume complete %s collection:%s id:%d", dirname, collection, id)
 	return
 }
 
 func (v *Volume) String() string {
-	v.noWriteLock.RLock()
-	defer v.noWriteLock.RUnlock()
-	return fmt.Sprintf("Id:%v dir:%s dirIdx:%s Collection:%s dataFile:%v nm:%v noWrite:%v canDelete:%v", v.Id, v.dir, v.dirIdx, v.Collection, v.DataBackend, v.nm, v.noWriteOrDelete || v.noWriteCanDelete, v.noWriteCanDelete)
+	v.canDeleteLock.RLock()
+	defer v.canDeleteLock.RUnlock()
+	return fmt.Sprintf("Id:%v dir:%s dirIdx:%s Collection:%s dataFile:%v nm:%v noWrite:%v canDelete:%v", v.Id, v.dir, v.dirIdx, v.Collection, v.DataBackend, v.nm, !v.IsReadOnly(), v.canDelete)
 }
 
 func VolumeFileName(dir string, collection string, id int) (fileName string) {
@@ -329,7 +332,7 @@ func (v *Volume) ToVolumeInformationMessage() (types.NeedleId, *master_pb.Volume
 		FileCount:        fileCount,
 		DeleteCount:      deletedCount,
 		DeletedByteCount: deletedSize,
-		ReadOnly:         v.IsReadOnly(),
+		ReadOnly:         v.volumeInfo.ReadOnly,
 		ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
 		Version:          uint32(v.Version()),
 		Ttl:              v.Ttl.ToUint32(),
@@ -354,7 +357,14 @@ func (v *Volume) RemoteStorageNameKey() (storageName, storageKey string) {
 }
 
 func (v *Volume) IsReadOnly() bool {
-	v.noWriteLock.RLock()
-	defer v.noWriteLock.RUnlock()
-	return v.noWriteOrDelete || v.noWriteCanDelete || v.location.isDiskSpaceLow
+	v.volumeInfoLock.RLock()
+	defer v.volumeInfoLock.RUnlock()
+	return v.volumeInfo.ReadOnly
+}
+
+func (v *Volume) PersistReadOnly(readOnly bool) {
+	v.volumeInfoLock.RLock()
+	defer v.volumeInfoLock.RUnlock()
+	v.volumeInfo.ReadOnly = readOnly
+	v.SaveVolumeInfo()
 }

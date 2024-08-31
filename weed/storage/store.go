@@ -298,19 +298,15 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 
 			if _, exist := collectionVolumeReadOnlyCount[v.Collection]; !exist {
 				collectionVolumeReadOnlyCount[v.Collection] = map[string]uint8{
-					stats.IsReadOnly:       0,
-					stats.NoWriteOrDelete:  0,
-					stats.NoWriteCanDelete: 0,
-					stats.IsDiskSpaceLow:   0,
+					stats.IsReadOnly:     0,
+					stats.CanDelete:      0,
+					stats.IsDiskSpaceLow: 0,
 				}
 			}
 			if !shouldDeleteVolume && v.IsReadOnly() {
 				collectionVolumeReadOnlyCount[v.Collection][stats.IsReadOnly] += 1
-				if v.noWriteOrDelete {
-					collectionVolumeReadOnlyCount[v.Collection][stats.NoWriteOrDelete] += 1
-				}
-				if v.noWriteCanDelete {
-					collectionVolumeReadOnlyCount[v.Collection][stats.NoWriteCanDelete] += 1
+				if v.canDelete {
+					collectionVolumeReadOnlyCount[v.Collection][stats.CanDelete] += 1
 				}
 				if v.location.isDiskSpaceLow {
 					collectionVolumeReadOnlyCount[v.Collection][stats.IsDiskSpaceLow] += 1
@@ -431,7 +427,7 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, checkCook
 
 func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (Size, error) {
 	if v := s.findVolume(i); v != nil {
-		if v.noWriteOrDelete {
+		if v.IsReadOnly() {
 			return 0, fmt.Errorf("volume %d is read only", i)
 		}
 		return v.deleteNeedle2(n)
@@ -473,9 +469,7 @@ func (s *Store) MarkVolumeReadonly(i needle.VolumeId) error {
 	if v == nil {
 		return fmt.Errorf("volume %d not found", i)
 	}
-	v.noWriteLock.Lock()
-	v.noWriteOrDelete = true
-	v.noWriteLock.Unlock()
+	v.PersistReadOnly(true)
 	return nil
 }
 
@@ -484,15 +478,13 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 	if v == nil {
 		return fmt.Errorf("volume %d not found", i)
 	}
-	v.noWriteLock.Lock()
-	v.noWriteOrDelete = false
-	v.noWriteLock.Unlock()
+	v.PersistReadOnly(false)
 	return nil
 }
 
 func (s *Store) MountVolume(i needle.VolumeId) error {
 	for _, location := range s.Locations {
-		if found := location.LoadVolume(i, s.NeedleMapKind); found == true {
+		if found := location.LoadVolume(i, s.NeedleMapKind); found {
 			glog.V(0).Infof("mount volume %d", i)
 			v := s.findVolume(i)
 			s.NewVolumesChan <- master_pb.VolumeShortInformationMessage{
