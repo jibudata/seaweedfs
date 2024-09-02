@@ -62,9 +62,6 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		} else {
 			glog.V(0).Infof("opening %s in READONLY mode", v.FileName(".dat"))
 			dataFile, err = os.Open(v.FileName(".dat"))
-			if !v.IsReadOnly() {
-				v.PersistReadOnly(true)
-			}
 		}
 		v.lastModifiedTsSeconds = uint64(modifiedTime.Unix())
 		if fileSize >= super_block.SuperBlockSize {
@@ -127,10 +124,16 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 				return fmt.Errorf("cannot write Volume Index %s: %v", v.FileName(".idx"), err)
 			}
 		}
-		glog.V(0).Infof("checking volume data integrity for volume %d", v.Id)
-		if v.lastAppendAtNs, err = CheckAndFixVolumeDataIntegrity(v, indexFile); err != nil {
-			v.PersistReadOnly(true)
-			glog.V(0).Infof("volumeDataIntegrityChecking failed %v", err)
+		// Do not need to check the data integrity for remote volumes,
+		// since the remote storage tier may have larger capacity, the volume
+		// data read will trigger the ReadAt() function to read from the remote
+		// storage tier, and download to local storage, which may cause the
+		// capactiy overloading.
+		if !v.HasRemoteFile() {
+			glog.V(0).Infof("checking volume data integrity for volume %d", v.Id)
+			if v.lastAppendAtNs, err = CheckAndFixVolumeDataIntegrity(v, indexFile); err != nil {
+				glog.V(0).Infof("volumeDataIntegrityChecking failed %v", err)
+			}
 		}
 
 		if v.canDelete {
@@ -211,6 +214,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	if err == nil {
 		hasLoadedVolume = true
 	}
+	glog.V(0).Info("loaded volume", v.FileName(".dat"))
 
 	return err
 }

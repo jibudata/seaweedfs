@@ -61,11 +61,8 @@ func NewVolume(dirname string, dirIdx string, collection string, id needle.Volum
 	v.SuperBlock = super_block.SuperBlock{ReplicaPlacement: replicaPlacement, Ttl: ttl}
 	v.needleMapKind = needleMapKind
 	v.ldbTimeout = ldbTimeout
-	glog.Infof("NewVolume %s collection:%s id:%d", dirname, collection, id)
 	e = v.load(true, true, needleMapKind, preallocate)
-	glog.Infof("NewVolume load complete %s collection:%s id:%d", dirname, collection, id)
 	v.startWorker()
-	glog.Infof("NewVolume complete %s collection:%s id:%d", dirname, collection, id)
 	return
 }
 
@@ -332,7 +329,7 @@ func (v *Volume) ToVolumeInformationMessage() (types.NeedleId, *master_pb.Volume
 		FileCount:        fileCount,
 		DeleteCount:      deletedCount,
 		DeletedByteCount: deletedSize,
-		ReadOnly:         v.volumeInfo.ReadOnly,
+		ReadOnly:         v.IsReadOnly(),
 		ReplicaPlacement: uint32(v.ReplicaPlacement.Byte()),
 		Version:          uint32(v.Version()),
 		Ttl:              v.Ttl.ToUint32(),
@@ -357,8 +354,8 @@ func (v *Volume) RemoteStorageNameKey() (storageName, storageKey string) {
 }
 
 func (v *Volume) IsReadOnly() bool {
-	v.volumeInfoLock.RLock()
-	defer v.volumeInfoLock.RUnlock()
+	//v.volumeInfoLock.RLock()
+	//defer v.volumeInfoLock.RUnlock()
 	return v.volumeInfo.ReadOnly
 }
 

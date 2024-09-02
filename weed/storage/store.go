@@ -427,7 +427,7 @@ func (s *Store) WriteVolumeNeedle(i needle.VolumeId, n *needle.Needle, checkCook
 
 func (s *Store) DeleteVolumeNeedle(i needle.VolumeId, n *needle.Needle) (Size, error) {
 	if v := s.findVolume(i); v != nil {
-		if v.IsReadOnly() {
+		if v.IsReadOnly() && !v.canDelete {
 			return 0, fmt.Errorf("volume %d is read only", i)
 		}
 		return v.deleteNeedle2(n)
