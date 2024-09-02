@@ -354,9 +354,7 @@ func (v *Volume) RemoteStorageNameKey() (storageName, storageKey string) {
 }
 
 func (v *Volume) IsReadOnly() bool {
-	//v.volumeInfoLock.RLock()
-	//defer v.volumeInfoLock.RUnlock()
-	return v.volumeInfo.ReadOnly
+	return v.volumeInfo.ReadOnly || v.location.isDiskSpaceLow
 }
 
 func (v *Volume) PersistReadOnly(readOnly bool) {
