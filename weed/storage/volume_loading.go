@@ -62,6 +62,9 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		} else {
 			glog.V(0).Infof("opening %s in READONLY mode", v.FileName(".dat"))
 			dataFile, err = os.Open(v.FileName(".dat"))
+			if !v.volumeInfo.ReadOnly {
+				v.PersistReadOnly(true)
+			}
 		}
 		v.lastModifiedTsSeconds = uint64(modifiedTime.Unix())
 		if fileSize >= super_block.SuperBlockSize {
@@ -133,10 +136,13 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			glog.V(0).Infof("checking volume data integrity for volume %d", v.Id)
 			if v.lastAppendAtNs, err = CheckAndFixVolumeDataIntegrity(v, indexFile); err != nil {
 				glog.V(0).Infof("volumeDataIntegrityChecking failed %v", err)
+				if !v.volumeInfo.ReadOnly {
+					v.PersistReadOnly(true)
+				}
 			}
 		}
 
-		if v.canDelete {
+		if v.volumeInfo.ReadOnly {
 			if v.nm, err = NewSortedFileNeedleMap(v.IndexFileName(), indexFile); err != nil {
 				glog.V(0).Infof("loading sorted db %s error: %v", v.FileName(".sdx"), err)
 			}
@@ -214,7 +220,6 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 	if err == nil {
 		hasLoadedVolume = true
 	}
-	glog.V(0).Info("loaded volume", v.FileName(".dat"))
 
 	return err
 }
