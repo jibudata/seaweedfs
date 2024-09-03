@@ -48,7 +48,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		glog.V(0).Infof("loading volume %d from remote %v", v.Id, v.volumeInfo)
 		v.LoadRemoteFile()
 		alreadyHasSuperBlock = true
-		if !v.IsReadOnly() {
+		if !v.volumeInfo.ReadOnly {
 			v.PersistReadOnly(true)
 		}
 	} else if exists, canRead, canWrite, modifiedTime, fileSize := util.CheckFile(v.FileName(".dat")); exists {
@@ -113,7 +113,7 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 			glog.Fatalf("check volume idx file %s: %v", v.FileName(".idx"), err)
 		}
 		var indexFile *os.File
-		if v.IsReadOnly() {
+		if v.volumeInfo.ReadOnly {
 			glog.V(0).Infoln("open to read file", v.FileName(".idx"))
 			if indexFile, err = os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644); err != nil {
 				return fmt.Errorf("cannot read Volume Index %s: %v", v.FileName(".idx"), err)
