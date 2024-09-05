@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"math/rand"
+	"math/rand/v2"
 	"sync"
 	"time"
 
@@ -28,6 +28,7 @@ This package is created to resolve these replica placement issues:
 type VolumeGrowRequest struct {
 	Option *VolumeGrowOption
 	Count  uint32
+	Force  bool
 }
 
 type volumeGrowthStrategy struct {
@@ -222,7 +223,7 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		servers = append(servers, server.(*DataNode))
 	}
 	for _, rack := range otherRacks {
-		r := rand.Int63n(rack.AvailableSpaceFor(option))
+		r := rand.Int64N(rack.AvailableSpaceFor(option))
 		if server, e := rack.ReserveOneVolume(r, option); e == nil {
 			servers = append(servers, server)
 		} else {
@@ -230,7 +231,7 @@ func (vg *VolumeGrowth) findEmptySlotsForOneVolume(topo *Topology, option *Volum
 		}
 	}
 	for _, datacenter := range otherDataCenters {
-		r := rand.Int63n(datacenter.AvailableSpaceFor(option))
+		r := rand.Int64N(datacenter.AvailableSpaceFor(option))
 		if server, e := datacenter.ReserveOneVolume(r, option); e == nil {
 			servers = append(servers, server)
 		} else {
