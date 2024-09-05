@@ -475,6 +475,7 @@ func (s *Store) MarkVolumeReadonly(i needle.VolumeId) error {
 	}
 	v.noWriteLock.Lock()
 	v.noWriteOrDelete = true
+	v.PersistReadOnly(true)
 	v.noWriteLock.Unlock()
 	return nil
 }
@@ -486,6 +487,7 @@ func (s *Store) MarkVolumeWritable(i needle.VolumeId) error {
 	}
 	v.noWriteLock.Lock()
 	v.noWriteOrDelete = false
+	v.PersistReadOnly(false)
 	v.noWriteLock.Unlock()
 	return nil
 }
