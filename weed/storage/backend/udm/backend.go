@@ -44,7 +44,7 @@ func newBackendStorage(configuration backend.StringProperties, configPrefix stri
 		return nil, err
 	}
 
-	glog.V(1).Infof("Adding backend storage: %s.%s", storageType, id)
+	glog.V(1).Infof("Adding backend storage: %s.%s, read disabled is %t", storageType, id, readDisabled)
 
 	return &BackendStorage{
 		id:           id,
@@ -56,7 +56,8 @@ func newBackendStorage(configuration backend.StringProperties, configPrefix stri
 
 func (s *BackendStorage) ToProperties() map[string]string {
 	return map[string]string{
-		"grpc_server": s.grpcServer,
+		"grpc_server":   s.grpcServer,
+		"read_disabled": strconv.FormatBool(s.readDisabled),
 	}
 }
 
