@@ -673,7 +673,7 @@ func TestRemoteCacheResponseVersionFencesUndeliveredEvents(t *testing.T) {
 		Attributes: &filer_pb.FuseAttributes{FileSize: 88},
 	}, 0, 0)
 
-	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+	if err := fh.downloadRemoteEntry(context.Background(), fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
 	}
 	if size := fh.GetEntry().GetEntry().Attributes.FileSize; size != 200 {
@@ -1511,7 +1511,7 @@ func TestRemoteDownloadBaseMappedToLocal(t *testing.T) {
 		RemoteEntry: &filer_pb.RemoteEntry{RemoteSize: 200},
 	}, 0, 0)
 
-	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+	if err := fh.downloadRemoteEntry(context.Background(), fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
 	}
 	// The base — and the live entry — must be in local uid form.
@@ -1622,7 +1622,7 @@ func TestStaleRemoteDownloadDoesNotRollBack(t *testing.T) {
 	})
 	fh.advanceEntryVersion(3000, 0)
 
-	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+	if err := fh.downloadRemoteEntry(context.Background(), fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
 	}
 
@@ -1649,7 +1649,7 @@ func TestRemoteOnlyHandleTakesUnversionedDownload(t *testing.T) {
 	}, 0, 0)
 	fh.advanceEntryVersion(3000, 0)
 
-	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+	if err := fh.downloadRemoteEntry(context.Background(), fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
 	}
 
@@ -1806,7 +1806,7 @@ func TestUnversionedRemoteDownloadDoesNotOverwriteVersioned(t *testing.T) {
 	})
 	fh.advanceEntryVersion(3000, 0)
 
-	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+	if err := fh.downloadRemoteEntry(context.Background(), fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
 	}
 
@@ -1936,7 +1936,7 @@ func TestRejectedDownloadDoesNotRollBackCache(t *testing.T) {
 	}, 0, 0)
 	fh.advanceEntryVersion(3000, 0)
 
-	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+	if err := fh.downloadRemoteEntry(context.Background(), fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
 	}
 	// The download publishes asynchronously; a synchronous apply behind it
@@ -1971,7 +1971,7 @@ func TestRemoteOnlyHandleRefusesKnownOlderDownload(t *testing.T) {
 	}, 0, 0)
 	fh.advanceEntryVersion(3000, 0)
 
-	if err := fh.downloadRemoteEntry(fh.GetEntry()); err != nil {
+	if err := fh.downloadRemoteEntry(context.Background(), fh.GetEntry()); err != nil {
 		t.Fatalf("downloadRemoteEntry: %v", err)
 	}
 
