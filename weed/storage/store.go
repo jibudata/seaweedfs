@@ -902,6 +902,12 @@ func (s *Store) MarkVolumeReadonly(i needle.VolumeId, canDelete bool, persist bo
 			return fmt.Errorf("volume %d reopen idx for write: %v", i, err)
 		}
 	}
+	// Wait for in-flight appends so a mark acked mid-write cannot race an
+	// encode that reads the index and deletes the replica the write lands on.
+	v.dataFileSyncLock.Lock()
+	defer v.dataFileSyncLock.Unlock()
+	v.dataFileAccessLock.Lock()
+	defer v.dataFileAccessLock.Unlock()
 	v.noWriteLock.Lock()
 	prevNoWriteOrDelete := v.noWriteOrDelete
 	prevNoWriteCanDelete := v.noWriteCanDelete
@@ -1186,6 +1192,7 @@ func (s *Store) deleteVolumeGuarded(i needle.VolumeId, onlyEmpty bool, onlyGarba
 	unlockAll := func() {
 		for _, v := range lockedVolumes {
 			v.dataFileAccessLock.Unlock()
+			v.dataFileSyncLock.Unlock()
 		}
 		for _, location := range lockedLocations {
 			location.volumesLock.Unlock()
@@ -1196,6 +1203,7 @@ func (s *Store) deleteVolumeGuarded(i needle.VolumeId, onlyEmpty bool, onlyGarba
 	for _, location := range s.Locations {
 		location.volumesLock.Lock()
 		if v, ok := location.volumes[i]; ok {
+			v.dataFileSyncLock.Lock()
 			v.dataFileAccessLock.Lock()
 			lockedLocations = append(lockedLocations, location)
 			lockedVolumes = append(lockedVolumes, v)
