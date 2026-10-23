@@ -222,6 +222,12 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if n.Cookie != cookie {
+		// A meta-only read ended the request; record its success.
+		if readOption.IsMetaOnly {
+			if v := vs.store.GetVolume(volumeId); v != nil {
+				v.NoteMetaOnlySuccess()
+			}
+		}
 		glog.V(0).Infof("request %s with cookie:%x expected:%x from %s agent %s", r.URL.Path, cookie, n.Cookie, r.RemoteAddr, r.UserAgent())
 		NotFound(w)
 		return
@@ -231,6 +237,11 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		if r.Header.Get("If-Modified-Since") != "" {
 			if t, parseError := time.Parse(http.TimeFormat, r.Header.Get("If-Modified-Since")); parseError == nil {
 				if t.Unix() >= int64(n.LastModified) {
+					if readOption.IsMetaOnly {
+						if v := vs.store.GetVolume(volumeId); v != nil {
+							v.NoteMetaOnlySuccess()
+						}
+					}
 					w.WriteHeader(http.StatusNotModified)
 					return
 				}
@@ -238,6 +249,11 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if inm := r.Header.Get("If-None-Match"); inm == "\""+n.Etag()+"\"" {
+		if readOption.IsMetaOnly {
+			if v := vs.store.GetVolume(volumeId); v != nil {
+				v.NoteMetaOnlySuccess()
+			}
+		}
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
@@ -464,6 +480,10 @@ func (vs *VolumeServer) streamWriteResponseContent(filename string, mimeType str
 	AdjustPassthroughHeaders(w, r, filename)
 
 	if r.Method == http.MethodHead {
+		// HEAD ends at the metadata read; record its success.
+		if v := vs.store.GetVolume(volumeId); v != nil {
+			v.NoteMetaOnlySuccess()
+		}
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		return
 	}
