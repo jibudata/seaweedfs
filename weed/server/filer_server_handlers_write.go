@@ -325,7 +325,7 @@ func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCol
 		DataNode:          util.Nvl(dataNode, rule.DataNode, fs.option.DataNode),
 		TtlSeconds:        ttlSeconds,
 		DiskType:          util.Nvl(diskType, overlayDisk, rule.DiskType),
-		Fsync:             rule.Fsync,
+		Fsync:             rule.GetFsync(),
 		VolumeGrowthCount: rule.VolumeGrowthCount,
 		MaxFileNameLength: maxFileNameLength,
 	}, nil
