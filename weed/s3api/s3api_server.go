@@ -237,6 +237,8 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 			FilerGroup:        option.FilerGroup,
 			DiscoveryInterval: 5 * time.Minute,
 		})
+		masterClient.SetOnVolumeLocationChangeFn(filerClient.OnVolumeLocationChange)
+		masterClient.SetOnVidMapResetFn(filerClient.OnVidMapReset)
 
 		glog.V(1).Infof("S3 API initialized FilerClient with %d filer(s) and discovery enabled (group: %s, masters: %v)",
 			len(option.Filers), option.FilerGroup, option.Masters)
