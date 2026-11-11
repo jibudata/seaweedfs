@@ -61,7 +61,7 @@ func (v *Volume) destroyLocked(onlyEmpty bool, onlyGarbage bool, keepRemoteData 
 		return
 	}
 	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
-		err = fmt.Errorf("volume %d is compacting", v.Id)
+		err = v.compactingError()
 		return
 	}
 	v.stopWorker()
