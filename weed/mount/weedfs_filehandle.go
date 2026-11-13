@@ -95,9 +95,22 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 }
 
 // lookupFilerEntry reads path from the filer, bypassing the local cache, in
-// local ids and with the log position the answer reflects. It asks the filer
-// that checks path's write conditions, since another filer may lag it.
+// local ids and with the log position the answer reflects.
 func (wfs *WFS) lookupFilerEntry(ctx context.Context, path util.FullPath) (*filer_pb.Entry, entryVersion, error) {
+	entry, version, err := wfs.lookupOwnerEntry(ctx, path)
+	if err != nil {
+		return nil, entryVersion{}, err
+	}
+	if entry.Attributes == nil {
+		entry.Attributes = &filer_pb.FuseAttributes{}
+	}
+	wfs.mapPbIdFromFilerToLocal(entry)
+	return entry, version, nil
+}
+
+// lookupOwnerEntry reads path in filer ids from the filer that checks path's
+// write conditions, since another filer may lag it.
+func (wfs *WFS) lookupOwnerEntry(ctx context.Context, path util.FullPath) (*filer_pb.Entry, entryVersion, error) {
 	dir, name := path.DirAndName()
 	var entry *filer_pb.Entry
 	var version entryVersion
@@ -118,10 +131,6 @@ func (wfs *WFS) lookupFilerEntry(ctx context.Context, path util.FullPath) (*file
 	if err != nil {
 		return nil, entryVersion{}, err
 	}
-	if entry.Attributes == nil {
-		entry.Attributes = &filer_pb.FuseAttributes{}
-	}
-	wfs.mapPbIdFromFilerToLocal(entry)
 	return entry, version, nil
 }
 

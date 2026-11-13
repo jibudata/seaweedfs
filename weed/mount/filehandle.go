@@ -20,9 +20,12 @@ type FileHandleId uint64
 var IsDebugFileReadWrite = false
 
 type FileHandle struct {
-	fh              FileHandleId
-	counter         int64
-	entry           *LockedEntry
+	fh      FileHandleId
+	counter int64
+	entry   *LockedEntry
+	// Nested handle lock order: wfs.fhLockTable[fh.fh] -> entryLock ->
+	// LockedEntry.RWMutex. Paths may use a subset, but must never acquire an
+	// earlier lock while holding a later one. Release in reverse order.
 	entryLock       sync.RWMutex
 	entryChunkGroup *filer.ChunkGroup
 	inode           uint64
