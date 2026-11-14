@@ -116,7 +116,7 @@ func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 // volume servers at this point; only the filer metadata reference needs persisting.
 func (wfs *WFS) flushMetadataWithRetry(fh *FileHandle, dir, name string, fileFullPath util.FullPath) {
 	err := retryMetadataFlush(context.Background(), func() error {
-		return wfs.flushMetadataToFiler(context.Background(), fh, dir, name, fh.asyncFlushUid, fh.asyncFlushGid)
+		return wfs.flushMetadataToFiler(context.Background(), fh, dir, name, fh.asyncFlushUid, fh.asyncFlushGid, nil)
 	}, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
 		glog.Warningf("completeAsyncFlush %s: retrying metadata flush (attempt %d/%d) after %v: %v",
 			fileFullPath, nextAttempt, totalAttempts, backoff, err)
