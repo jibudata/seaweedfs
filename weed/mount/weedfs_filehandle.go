@@ -61,7 +61,7 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 	}
 	// need to AcquireFileHandle again to ensure correct handle counter
 	var existed bool
-	fileHandle, existed = wfs.fhMap.AcquireFileHandle(wfs, inode, entry, entryVersionTsNs.tsNs, entryVersionTsNs.signature)
+	fileHandle, existed = wfs.fhMap.AcquireFileHandle(wfs, inode, entry, entryVersionTsNs.tsNs, entryVersionTsNs.signature, flags&syscall.O_APPEND != 0)
 	fileHandle.RememberPath(path)
 	if existed && freshLookup {
 		// Another opener created the handle while our lookup was in flight;
@@ -163,6 +163,9 @@ func (wfs *WFS) ReleaseHandle(handleId FileHandleId) {
 	wfs.pendingAsyncFlushMu.Unlock()
 
 	if fhToRelease != nil {
+		if fhToRelease.dirtyMetadata && !fhToRelease.isDeleted {
+			(&contentPublication{failure: fhToRelease.writebackContentError}).abandon()
+		}
 		fhToRelease.ReleaseHandle()
 	}
 }

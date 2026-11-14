@@ -60,8 +60,8 @@ func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 	// so a failure here indicates a persistent issue; the chunk data has been freed.
 	if err := fh.dirtyPages.FlushData(); err != nil {
 		glog.Errorf("completeAsyncFlush inode %d: data flush failed: %v", fh.inode, err)
-		// Data is lost at this point (chunks freed after internal retry exhaustion).
-		// Proceed to cleanup to avoid resource leaks and unmount hangs.
+		(&contentPublication{failure: fh.writebackContentError}).abandon()
+		// Data is lost at this point. Proceed to cleanup to avoid resource leaks and unmount hangs.
 	} else if fh.dirtyMetadata {
 		// Phase 2: Flush metadata unless the file was explicitly unlinked.
 		//
@@ -115,13 +115,15 @@ func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 // with exponential backoff on transient errors. The chunk data is already on the
 // volume servers at this point; only the filer metadata reference needs persisting.
 func (wfs *WFS) flushMetadataWithRetry(fh *FileHandle, dir, name string, fileFullPath util.FullPath) {
+	publication := &contentPublication{failure: fh.writebackContentError}
 	err := retryMetadataFlush(context.Background(), func() error {
-		return wfs.flushMetadataToFiler(context.Background(), fh, dir, name, fh.asyncFlushUid, fh.asyncFlushGid, nil)
+		return wfs.flushMetadataToFiler(context.Background(), fh, dir, name, fh.asyncFlushUid, fh.asyncFlushGid, nil, publication)
 	}, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
 		glog.Warningf("completeAsyncFlush %s: retrying metadata flush (attempt %d/%d) after %v: %v",
 			fileFullPath, nextAttempt, totalAttempts, backoff, err)
 	})
 	if err != nil {
+		publication.abandon()
 		glog.Errorf("completeAsyncFlush %s: metadata flush failed after %d attempts: %v - "+
 			"chunks are uploaded but NOT referenced in filer metadata; "+
 			"they will appear as orphans in volume.fsck",
