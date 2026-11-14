@@ -125,6 +125,10 @@ func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) *FileHandle {
 			// via FindFileHandle during the background drain.
 			return fhHandle
 		}
+		// Fence before a reopen can see the inode without this handle.
+		if fhHandle.dirtyContent && !fhHandle.isDeleted {
+			(&contentPublication{failure: fhHandle.writebackContentError}).abandon()
+		}
 		delete(i.inode2fh, inode)
 		delete(i.fh2inode, fhHandle.fh)
 		return fhHandle
