@@ -760,7 +760,7 @@ func (vcd *volumeCheckDisk) doVolumeCheckDisk(minuend, subtrahend *needle_map.Me
 		}
 		deleteResults := operation.DeleteFileIdsAtOneVolumeServer(
 			pb.NewServerAddressFromDataNode(target.location.dataNode),
-			vcd.grpcDialOption(), fidList, false)
+			vcd.grpcDialOption(), fidList, false, false)
 
 		// Check for errors in results
 		for _, deleteResult := range deleteResults {
