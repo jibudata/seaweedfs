@@ -1,6 +1,7 @@
 package wdclient
 
 import (
+	"context"
 	"sync/atomic"
 	"testing"
 
