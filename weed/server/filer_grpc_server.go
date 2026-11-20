@@ -286,8 +286,14 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	createErr := fs.filer.CreateEntry(ctx, newEntry, existing, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory, so.MaxFileNameLength)
 
 	if createErr == nil {
-		fs.filer.DeleteChunksNotRecursive(garbage)
 		resp.MetadataEvent = eventSink.Last()
+		// garbage holds chunks the request's own list covers; when the
+		// create replaced one name of a hard-linked file, the ones the file
+		// still has stay for its other names
+		if replaced := resp.MetadataEvent.GetEventNotification().GetOldEntry(); replaced != nil {
+			garbage = fs.filer.KeepHardLinkedChunks(ctx, filer.FromPbEntry(req.Directory, replaced), newEntry, garbage)
+		}
+		fs.filer.DeleteChunksNotRecursive(garbage)
 	} else {
 		glog.V(3).InfofCtx(ctx, "CreateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), createErr)
 		resp.Error = createErr.Error()
@@ -747,6 +753,9 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	resp := &filer_pb.UpdateEntryResponse{LogTsNs: logTsNs, LogSignature: fs.filer.Signature}
 	if err = fs.filer.UpdateEntry(ctx, entry, newEntry); err == nil {
+		// an update that is not the same hard link as entry dropped entry's
+		// link; the file's other names still read entry's chunks
+		garbage = fs.filer.KeepHardLinkedChunks(ctx, entry, newEntry, garbage)
 		fs.filer.DeleteChunksNotRecursive(garbage)
 
 		fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true, req.IsFromOtherCluster, req.Signatures)
