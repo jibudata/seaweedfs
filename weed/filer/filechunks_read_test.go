@@ -279,3 +279,153 @@ func TestActualReadResolvedChunks2(t *testing.T) {
 	}
 
 }
+
+// ---------------------------------------------------------------------------
+// Coverage regression tests.
+//
+// readResolvedChunks must satisfy two invariants:
+//
+//  1. Coverage completeness: the union of the emitted intervals equals the
+//     union of the chunk spans clipped to the window. A dropped range reads
+//     back as zeros, and SeparateGarbageChunks classifies any chunk whose
+//     coverage was never emitted as garbage — the flush path then deletes it
+//     from the filer entry, silently discarding acked writes.
+//  2. Newest write wins: each range is attributed to the chunk with the
+//     highest ModifiedTsNs spanning it; ties are broken by list order
+//     (later appends shadow earlier same-ts chunks, matching the append
+//     order in which entry.Chunks accumulates concurrent uploads).
+//
+// The previous queue-based sweep broke invariant 1 whenever timestamps
+// repeated (same-millisecond writes; manifest folds at ModifiedTsNs=0):
+// a START point whose ts tied the visible maximum was never inserted into
+// the queue, and an END point removed the first queued entry with a
+// matching ts, so ended chunks stayed queued as ghosts while their own
+// coverage was never emitted.
+// ---------------------------------------------------------------------------
+
+// expectedWinners simulates the visible winner per byte position: highest
+// ModifiedTsNs wins, later list entries win ties.
+func expectedWinners(chunks []*filer_pb.FileChunk) map[int64]*filer_pb.FileChunk {
+	winners := make(map[int64]*filer_pb.FileChunk)
+	for _, c := range chunks {
+		for i := c.Offset; i < c.Offset+int64(c.Size); i++ {
+			if prev, ok := winners[i]; !ok || c.ModifiedTsNs >= prev.ModifiedTsNs {
+				winners[i] = c
+			}
+		}
+	}
+	return winners
+}
+
+// assertCoveragePreserved verifies both invariants over the emitted view.
+func assertCoveragePreserved(t *testing.T, chunks []*filer_pb.FileChunk, visibles *IntervalList[*VisibleInterval]) {
+	t.Helper()
+
+	expected := expectedWinners(chunks)
+	seen := make(map[int64]*VisibleInterval)
+	var prevStop int64 = math.MinInt64
+	for x := visibles.Front(); x != nil; x = x.Next {
+		v := x.Value
+		if v.start < prevStop {
+			t.Fatalf("emitted intervals overlap or are not ascending: [%d,%d) follows [%d,...)", v.start, v.stop, prevStop)
+		}
+		if v.stop <= v.start {
+			t.Fatalf("emitted empty interval [%d,%d)", v.start, v.stop)
+		}
+		prevStop = v.stop
+		for i := v.start; i < v.stop; i++ {
+			if _, dup := seen[i]; dup {
+				t.Fatalf("position %d covered more than once", i)
+			}
+			seen[i] = v
+			exp, covered := expected[i]
+			if !covered {
+				t.Fatalf("position %d emitted as %s but no chunk covers it (hole leaked into the view)", i, v.fileId)
+			}
+			if v.modifiedTsNs != exp.ModifiedTsNs || v.fileId != exp.GetFileIdString() {
+				t.Fatalf("position %d: expected winner %s(ts=%d), got %s(ts=%d)",
+					i, exp.GetFileIdString(), exp.ModifiedTsNs, v.fileId, v.modifiedTsNs)
+			}
+		}
+	}
+	for pos, c := range expected {
+		if _, ok := seen[pos]; !ok {
+			t.Fatalf("position %d is covered by chunk %s(ts=%d) but missing from the emitted view: coverage loss",
+				pos, c.GetFileIdString(), c.ModifiedTsNs)
+		}
+	}
+}
+
+func TestReadResolvedChunksTiedTimestampsCoverage(t *testing.T) {
+	// Two overlapping writes carrying the same ModifiedTsNs (the queue sweep
+	// dropped the second START on the tie and emitted only chunk a's range).
+	chunks := []*filer_pb.FileChunk{
+		{FileId: "a", Offset: 0, Size: 100, ModifiedTsNs: 7},
+		{FileId: "b", Offset: 50, Size: 100, ModifiedTsNs: 7},
+	}
+	visibles := readResolvedChunks(chunks, 0, math.MaxInt64)
+	assertCoveragePreserved(t, chunks, visibles)
+}
+
+func TestReadResolvedChunksZeroTimestampsCoverage(t *testing.T) {
+	// Manifest folds write ModifiedTsNs=0; interleaved zero-ts chunks must
+	// not lose coverage.
+	chunks := []*filer_pb.FileChunk{
+		{FileId: "a", Offset: 0, Size: 64, ModifiedTsNs: 0},
+		{FileId: "b", Offset: 32, Size: 64, ModifiedTsNs: 0},
+		{FileId: "c", Offset: 80, Size: 48, ModifiedTsNs: 0},
+	}
+	visibles := readResolvedChunks(chunks, 0, math.MaxInt64)
+	assertCoveragePreserved(t, chunks, visibles)
+}
+
+func TestReadResolvedChunksGarbageOnlyFullyShadowed(t *testing.T) {
+	// The data-loss chain: coverage loss makes SeparateGarbageChunks delete
+	// chunks that still carry unshadowed (acked) data.
+	chunks := []*filer_pb.FileChunk{
+		{FileId: "a", Offset: 0, Size: 100, ModifiedTsNs: 7},
+		{FileId: "b", Offset: 50, Size: 100, ModifiedTsNs: 7}, // unshadowed [100,150)
+	}
+	visibles := readResolvedChunks(chunks, 0, math.MaxInt64)
+	_, garbage := SeparateGarbageChunks(visibles, chunks)
+	if len(garbage) != 0 {
+		t.Fatalf("chunk b still carries unshadowed data [100,150) but was classified as garbage (%d chunks)", len(garbage))
+	}
+
+	// Fully shadowed variant: a later same-ts full overwrite must shadow the
+	// earlier chunk exactly, so the earlier blob is the only garbage.
+	chunks2 := []*filer_pb.FileChunk{
+		{FileId: "a", Offset: 0, Size: 100, ModifiedTsNs: 7},
+		{FileId: "b", Offset: 0, Size: 100, ModifiedTsNs: 7},
+	}
+	visibles2 := readResolvedChunks(chunks2, 0, math.MaxInt64)
+	_, garbage2 := SeparateGarbageChunks(visibles2, chunks2)
+	if len(garbage2) != 1 || garbage2[0].GetFileIdString() != "a" {
+		t.Fatalf("expected only the fully-shadowed earlier chunk a as garbage, got %d chunks", len(garbage2))
+	}
+}
+
+func TestReadResolvedChunksCoveragePropertyWithTies(t *testing.T) {
+	// Property test over random overlapping writes drawn from a tiny ts
+	// domain, so timestamp ties are frequent. Verifies coverage equality,
+	// winner correctness, interval disjointness, and that true holes stay
+	// out of the view.
+	r := rand.New(rand.NewSource(20261123))
+	var limit int64 = 4096
+	var chunks []*filer_pb.FileChunk
+	for i := 0; i < 300; i++ {
+		x, y := r.Int63n(limit), r.Int63n(limit)
+		start, end := min(x, y), max(x, y)
+		if start == end {
+			continue
+		}
+		chunks = append(chunks, &filer_pb.FileChunk{
+			FileId:       fmt.Sprintf("c%d", i),
+			Offset:       start,
+			Size:         uint64(end - start),
+			ModifiedTsNs: r.Int63n(6),
+		})
+	}
+	visibles := readResolvedChunks(chunks, 0, math.MaxInt64)
+	assertCoveragePreserved(t, chunks, visibles)
+}
