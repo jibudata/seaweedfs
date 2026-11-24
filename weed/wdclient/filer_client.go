@@ -60,8 +60,9 @@ type FilerClient struct {
 	masterClient       *MasterClient // Optional: for discovering filers in the same group
 	filerGroup         string        // Optional: filer group for discovery
 	discoveryInterval  time.Duration // How often to refresh filer list from master
-	stopDiscovery      chan struct{} // Signal to stop discovery goroutine
-	closeDiscoveryOnce sync.Once     // Ensures discovery channel is closed at most once
+	stopDiscovery      chan struct{}    // Signal to stop discovery goroutine
+	closeDiscoveryOnce sync.Once        // Ensures discovery channel is closed at most once
+	now                func() time.Time // clock; nil means time.Now
 }
 
 // filerVolumeProvider implements VolumeLocationProvider by querying filer
@@ -434,6 +435,39 @@ func (fc *FilerClient) applyDiscoveredFilers(discoveredFilers map[pb.ServerAddre
 	}
 }
 
+// OnVolumeLocationChange applies master-pushed changes to the lookup-fed cache,
+// so a retired server stops being tried before a read against it fails. An
+// add lifts the removal fence and caches the volume where the master client
+// now knows it to be, replacing what a lookup cached for it.
+//
+// The replacement matters after a leader change. The reconnect clears this
+// cache, and lookups refill it from the filer, whose own master client can
+// still answer from the previous leader's view until the new leader has heard
+// from the volume servers. A server lost with the old leader is then cached
+// again, and the new leader, which never knew it, never pushes its removal.
+// Its adds for the volumes that server held are what correct the refill.
+func (fc *FilerClient) OnVolumeLocationChange(loc Location, addedVids, deletedVids []uint32) {
+	for _, vid := range deletedVids {
+		fc.tombstone(vid, loc)
+		fc.deleteLocation(vid, loc)
+	}
+	for _, vid := range addedVids {
+		fc.untombstone(vid, loc)
+		if fc.masterClient == nil {
+			continue
+		}
+		if locations, found := fc.masterClient.vidMap.currentLocations(vid); found {
+			fc.confirmLocations(vid, locations)
+		}
+	}
+}
+
+// OnVidMapReset drops the cache, since removals made while the master link
+// was down are never pushed.
+func (fc *FilerClient) OnVidMapReset() {
+	fc.clearVidMap()
+}
+
 // GetLookupFileIdFunction returns a lookup function with URL preference handling
 func (fc *FilerClient) GetLookupFileIdFunction() LookupFileIdFunctionType {
 	if fc.urlPreference == PreferUrl {
@@ -558,6 +592,13 @@ func jitter(d time.Duration) time.Duration {
 // Circuit breaker pattern: skip filers with multiple recent consecutive failures
 // shouldSkipUnhealthyFilerWithHealth checks if a filer should be skipped based on health
 // Uses atomic operations only - safe to call without locks
+func (fc *FilerClient) clock() time.Time {
+	if fc.now == nil {
+		return time.Now()
+	}
+	return fc.now()
+}
+
 func (fc *FilerClient) shouldSkipUnhealthyFilerWithHealth(health *filerHealth) bool {
 	failureCount := atomic.LoadInt32(&health.failureCount)
 
@@ -572,11 +613,44 @@ func (fc *FilerClient) shouldSkipUnhealthyFilerWithHealth(health *filerHealth) b
 		return false // Never failed, shouldn't skip
 	}
 	lastFailureTime := time.Unix(0, lastFailureNs)
-	if time.Since(lastFailureTime) > fc.resetTimeout {
+	if fc.clock().Sub(lastFailureTime) > fc.resetTimeout {
 		return false // Time to re-check
 	}
 
 	return true // Skip this unhealthy filer
+}
+
+// allFilersUnhealthy reports whether the circuit breaker would skip every
+// known filer.
+func (fc *FilerClient) allFilersUnhealthy() bool {
+	fc.filerAddressesMu.RLock()
+	defer fc.filerAddressesMu.RUnlock()
+	if len(fc.filerHealth) == 0 {
+		return false
+	}
+	for _, health := range fc.filerHealth {
+		if !fc.shouldSkipUnhealthyFilerWithHealth(health) {
+			return false
+		}
+	}
+	return true
+}
+
+// filerUnreachable reports whether a failed lookup means the filer could not
+// be reached or could not serve the call, which is what the circuit breaker
+// counts. An error the filer sent back as its answer, such as a volume the
+// master does not know, says nothing about the filer's health.
+func filerUnreachable(err error) bool {
+	st, ok := util.ServerStatus(err)
+	if !ok {
+		// No status from a server: the call never got an answer.
+		return true
+	}
+	switch st.Code() {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted, codes.Aborted:
+		return true
+	}
+	return false
 }
 
 // recordFilerSuccessWithHealth resets failure tracking for a successful filer
@@ -615,6 +689,11 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 		n := int32(len(fc.filerAddresses))
 		fc.filerAddressesMu.RUnlock()
 
+		// The breaker steers lookups away from a failing filer towards the
+		// others. With every filer in its cool-down there is nowhere to steer,
+		// and skipping them all would fail the lookup without asking anyone.
+		skipUnhealthy := !fc.allFilersUnhealthy()
+
 		for x := int32(0); x < n; x++ {
 			// Get current filer address and health with read lock
 			fc.filerAddressesMu.RLock()
@@ -634,7 +713,7 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 			fc.filerAddressesMu.RUnlock()
 
 			// Circuit breaker: skip unhealthy filers (no lock needed - uses atomics)
-			if fc.shouldSkipUnhealthyFilerWithHealth(health) {
+			if skipUnhealthy && fc.shouldSkipUnhealthyFilerWithHealth(health) {
 				glog.V(2).Infof("FilerClient: skipping unhealthy filer %s (consecutive failures: %d)",
 					filerAddress, atomic.LoadInt32(&health.failureCount))
 				i++
@@ -696,7 +775,14 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 
 			if err != nil {
 				glog.V(1).Infof("FilerClient: filer %s lookup failed (attempt %d/%d, retry %d/%d): %v", filerAddress, x+1, n, retry+1, maxRetries, err)
-				fc.recordFilerFailureWithHealth(health)
+				if filerUnreachable(err) {
+					fc.recordFilerFailureWithHealth(health)
+				} else {
+					// The filer answered, for example that a volume has no
+					// location. Counting that against it would open the
+					// breaker on a healthy filer and fail every other lookup.
+					fc.recordFilerSuccessWithHealth(health)
+				}
 				lastErr = err
 				i++
 				if i >= n {
@@ -710,6 +796,12 @@ func (p *filerVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []s
 			fc.recordFilerSuccessWithHealth(health)
 			glog.V(3).Infof("FilerClient: looked up %d volumes on %s, found %d", len(volumeIds), filerAddress, len(result))
 			return result, nil
+		}
+
+		if lastErr == nil {
+			// Every filer was skipped: one tripped after the pass chose to skip
+			// unhealthy filers. The next pass asks them anyway.
+			lastErr = status.Error(codes.Unavailable, "no filer was asked")
 		}
 
 		// All filers failed on this attempt
