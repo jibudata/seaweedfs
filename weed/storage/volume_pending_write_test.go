@@ -143,39 +143,27 @@ func TestCancelWithOtherCookieKeepsWrite(t *testing.T) {
 // so an identical write sent after the delete appends its own copy instead of
 // matching the record about to be deleted, even in the same batch.
 func TestWriteAfterCancelledWriteStaysLive(t *testing.T) {
-	v := newWorkerTestVolume(t)
-	v.location = &DiskLocation{syncBatch: SyncBatchOption{
-		MinBytes:    1 << 30,
-		MinRequests: syncBatchMaxRequests,
-		Wait:        time.Minute,
-	}}
-	armed := make(chan chan time.Time, 1)
-	prevAfter := syncBatchAfter
-	syncBatchAfter = func(time.Duration) <-chan time.Time {
-		window := make(chan time.Time, 1)
-		armed <- window
-		return window
-	}
-	defer func() { syncBatchAfter = prevAfter }()
+	dir := t.TempDir()
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	require.NoError(t, err)
+	t.Cleanup(v.Close)
 
-	queue := func(n *needle.Needle) *needle.AsyncRequest {
+	stage := func(n *needle.Needle) *needle.AsyncRequest {
 		w := v.trackPendingWrite(n)
 		t.Cleanup(func() { v.untrackPendingWrite(w) })
 		r := needle.NewAsyncRequest(n, true)
 		r.ActualSize = needle.GetActualSize(Size(len(n.Data)), v.Version())
-		require.True(t, v.asyncRequestAppend(r))
 		return r
 	}
 
 	n := newRandomNeedle(1)
-	first := queue(n)
-	window := <-armed
+	first := stage(n)
 	v.CancelPendingWrites(n.Id, n.Cookie)
-	retry := queue(&needle.Needle{Id: n.Id, Cookie: n.Cookie, Data: n.Data, Checksum: n.Checksum})
-	require.Eventually(t, func() bool { return len(v.asyncRequestsChan) == 0 }, 10*time.Second, time.Millisecond)
-	window <- time.Now()
+	retry := stage(&needle.Needle{Id: n.Id, Cookie: n.Cookie, Data: n.Data, Checksum: n.Checksum})
 
-	_, _, _, err := first.WaitComplete()
+	v.processBatch([]*needle.AsyncRequest{first, retry})
+
+	_, _, _, err = first.WaitComplete()
 	require.ErrorIs(t, err, ErrorDeleted)
 	_, _, isUnchanged, err := retry.WaitComplete()
 	require.NoError(t, err)

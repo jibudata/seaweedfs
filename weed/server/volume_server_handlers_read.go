@@ -327,9 +327,6 @@ func shouldAttemptStreamWrite(hasLocalVolume bool, ext string, r *http.Request) 
 	if len(ext) > 0 {
 		ext = strings.ToLower(ext)
 	}
-	if r.Method == http.MethodHead {
-		return true, true
-	}
 	_, _, _, shouldResize := shouldResizeImages(ext, r)
 	_, _, _, _, shouldCrop := shouldCropImages(ext, r)
 	if shouldResize || shouldCrop {

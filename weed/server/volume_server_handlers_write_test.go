@@ -4,14 +4,19 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
@@ -21,7 +26,70 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
+
+type proxyTestMaster struct {
+	master_pb.UnimplementedSeaweedServer
+	lookup func(context.Context, *master_pb.LookupVolumeRequest) (*master_pb.LookupVolumeResponse, error)
+}
+
+func (m *proxyTestMaster) LookupVolume(ctx context.Context, req *master_pb.LookupVolumeRequest) (*master_pb.LookupVolumeResponse, error) {
+	return m.lookup(ctx, req)
+}
+
+func newProxyTestHTTPServer(t *testing.T, handler http.Handler) *httptest.Server {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &httptest.Server{Listener: listener, Config: &http.Server{Handler: handler}}
+	server.Start()
+	t.Cleanup(server.Close)
+	return server
+}
+
+func newProxyTestVolumeServer(t *testing.T, volumeID string, locations []*master_pb.Location, lookupErr error) *VolumeServer {
+	t.Helper()
+	operation.InvalidateVolumeIdLocationCache(volumeID)
+
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	masterAddress := pb.NewServerAddress("127.0.0.1", 9333, listener.Addr().(*net.TCPAddr).Port)
+	masterServer := grpc.NewServer()
+	master_pb.RegisterSeaweedServer(masterServer, &proxyTestMaster{lookup: func(_ context.Context, req *master_pb.LookupVolumeRequest) (*master_pb.LookupVolumeResponse, error) {
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if len(req.VolumeOrFileIds) == 0 {
+			return nil, errors.New("lookup request contains no volume IDs")
+		}
+		return &master_pb.LookupVolumeResponse{VolumeIdLocations: []*master_pb.LookupVolumeResponse_VolumeIdLocation{{
+			VolumeOrFileId: req.VolumeOrFileIds[0],
+			Locations:      locations,
+		}}}, nil
+	}})
+	go func() {
+		_ = masterServer.Serve(listener)
+	}()
+
+	vs := &VolumeServer{
+		store:          &storage.Store{Ip: "192.0.2.10", Port: 8080},
+		ReadMode:       "proxy",
+		grpcDialOption: grpc.WithTransportCredentials(insecure.NewCredentials()),
+	}
+	vs.setCurrentMaster(masterAddress)
+	t.Cleanup(func() {
+		operation.InvalidateVolumeIdLocationCache(volumeID)
+		pb.InvalidateGrpcConnection(masterAddress.ToGrpcAddress())
+		masterServer.Stop()
+	})
+	return vs
+}
 
 // heldSyncBackend parks the first .dat fsync until released: the window where
 // a durable write is appended but not indexed yet.

@@ -112,7 +112,7 @@ func TestBinarySearchByAppendAtNsDuringCompactionCommit(t *testing.T) {
 	for time.Now().Before(deadline) {
 		// shrink the volume on every commit: delete the newest live needles, add a few
 		for id := next - 1; id > 0 && id+400 > next; id-- {
-			if _, err := v.deleteNeedle2(newEmptyNeedle(id), false); err != nil {
+			if _, err := v.deleteNeedle2(newEmptyNeedle(id)); err != nil {
 				t.Fatalf("delete %d: %v", id, err)
 			}
 		}

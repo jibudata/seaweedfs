@@ -260,7 +260,7 @@ func TestDeletedNeedleStreamsWithReadDeleted(t *testing.T) {
 	v := mustReload(t, dir)
 	defer v.Close()
 
-	if _, err := v.deleteNeedle2(newEmptyNeedle(2), false); err != nil {
+	if _, err := v.deleteNeedle2(newEmptyNeedle(2)); err != nil {
 		t.Fatalf("delete needle 2: %v", err)
 	}
 

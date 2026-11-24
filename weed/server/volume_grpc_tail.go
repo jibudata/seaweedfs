@@ -127,7 +127,7 @@ func writeTailedNeedle(store *storage.Store, vid needle.VolumeId, n *needle.Need
 		}
 		if found {
 			if !size.IsDeleted() {
-				_, err = store.DeleteVolumeNeedle(vid, n, false)
+				_, err = store.DeleteVolumeNeedle(vid, n)
 			}
 			return err
 		}
