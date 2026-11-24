@@ -69,6 +69,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	if status != fuse.OK || entry == nil {
 		return status
 	}
+	ctx := context.Background()
 	if input.Valid&fuse.FATTR_SIZE == 0 && path != "" {
 		var unlock func()
 		if path, fh, entry, unlock, status = wfs.lockNodePublication(ctx, input.NodeId, path, fh, entry); status != fuse.OK || entry == nil {

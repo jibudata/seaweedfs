@@ -18,6 +18,35 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+func closeOnce(ch chan struct{}) func() {
+	var once sync.Once
+	return func() { once.Do(func() { close(ch) }) }
+}
+
+func createDeferredFile(t *testing.T, wfs *WFS, dirInode uint64, name string) *fuse.CreateOut {
+	t.Helper()
+	out := &fuse.CreateOut{}
+	if st := wfs.Create(make(chan struct{}), &fuse.CreateIn{
+		InHeader: fuse.InHeader{NodeId: dirInode, Caller: fuse.Caller{Owner: fuse.Owner{Uid: 123, Gid: 456}}},
+		Flags:    syscall.O_RDWR | syscall.O_CREAT | syscall.O_EXCL,
+		Mode:     0o600,
+	}, name, out); st != fuse.OK {
+		t.Fatalf("Create %s = %v, want OK", name, st)
+	}
+	fh := wfs.GetHandle(FileHandleId(out.Fh))
+	if fh == nil || !fh.dirtyMetadata {
+		t.Fatalf("Create %s should leave a dirty handle holding a deferred create", name)
+	}
+	return out
+}
+
+func flushHandle(wfs *WFS, out *fuse.CreateOut) fuse.Status {
+	return wfs.Flush(make(chan struct{}), &fuse.FlushIn{
+		InHeader: fuse.InHeader{NodeId: out.NodeId, Caller: fuse.Caller{Owner: fuse.Owner{Uid: 123, Gid: 456}}},
+		Fh:       out.Fh,
+	})
+}
+
 // renameRaceFiler answers lookups, creates and updates from its entries and
 // moves entries on rename. Each write records whether a rename was in flight
 // when it arrived: on TiKV, a write to the source then refuses the rename's

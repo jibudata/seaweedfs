@@ -5,9 +5,11 @@ import (
 	"io"
 	"sync"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/page_writer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type ChunkedDirtyPages struct {
@@ -17,8 +19,9 @@ type ChunkedDirtyPages struct {
 	lastErr        error
 	collection     string
 	replication    string
-	uploadPipeline *page_writer.UploadPipeline
-	hasWrites      bool
+	uploadPipeline  *page_writer.UploadPipeline
+	hasWrites       bool
+	saveDataAsChunk func(util.FullPath) filer.SaveDataAsChunkFunctionType
 }
 
 var (
@@ -28,7 +31,8 @@ var (
 func newMemoryChunkPages(fh *FileHandle, chunkSize int64) *ChunkedDirtyPages {
 
 	dirtyPages := &ChunkedDirtyPages{
-		fh: fh,
+		fh:              fh,
+		saveDataAsChunk: fh.wfs.saveDataAsChunk,
 	}
 
 	swapFileDir := fh.wfs.option.getUniqueCacheDirForWrite()
@@ -101,7 +105,7 @@ func (pages *ChunkedDirtyPages) saveChunkedFileIntervalToStorage(reader io.Reade
 
 	fileFullPath := pages.fh.FullPath()
 	fileName := fileFullPath.Name()
-	chunk, err := pages.fh.wfs.saveDataAsChunk(fileFullPath)(reader, fileName, offset, modifiedTsNs, uint64(size))
+	chunk, err := pages.saveDataAsChunk(fileFullPath)(reader, fileName, offset, modifiedTsNs, uint64(size))
 	if err != nil {
 		glog.V(0).Infof("%v saveToStorage [%d,%d): %v", fileFullPath, offset, offset+size, err)
 		pages.setLastError(err)

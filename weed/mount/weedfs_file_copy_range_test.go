@@ -380,12 +380,12 @@ func TestStreamingCopyMarksOnlyAcceptedContentDirty(t *testing.T) {
 			wfs := newCopyRangeTestWFS()
 			srcInode := wfs.inodeToPath.Lookup(util.FullPath("/src.txt"), 1, false, false, 0, true)
 			dstInode := wfs.inodeToPath.Lookup(util.FullPath("/dst.txt"), 1, false, false, 0, true)
-			srcHandle, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
+			srcHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
 				Name:       "src.txt",
 				Attributes: &filer_pb.FuseAttributes{FileMode: 0100644, FileSize: 5, Inode: srcInode},
 				Content:    []byte("hello"),
 			}, 0, 0)
-			dstHandle, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
+			dstHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
 				Name:       "dst.txt",
 				Attributes: &filer_pb.FuseAttributes{FileMode: 0100644, Inode: dstInode},
 			}, 0, 0)
@@ -422,12 +422,12 @@ func TestStreamingCopyReportsPartlyBufferedCopy(t *testing.T) {
 	wfs.option.uniqueCacheDirForWrite = filepath.Join(notADir, "swap")
 	srcInode := wfs.inodeToPath.Lookup(util.FullPath("/src.txt"), 1, false, false, 0, true)
 	dstInode := wfs.inodeToPath.Lookup(util.FullPath("/dst.txt"), 1, false, false, 0, true)
-	srcHandle, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
+	srcHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
 		Name:       "src.txt",
 		Attributes: &filer_pb.FuseAttributes{FileMode: 0100644, FileSize: 1024, Inode: srcInode},
 		Content:    bytes.Repeat([]byte{'s'}, 1024),
 	}, 0, 0)
-	dstHandle, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
+	dstHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
 		Name:       "dst.txt",
 		Attributes: &filer_pb.FuseAttributes{FileMode: 0100644, Inode: dstInode},
 	}, 0, 0)
@@ -456,12 +456,12 @@ func TestServerSideCopySkipsFencedDestination(t *testing.T) {
 	wfs.option.WritebackCache = true
 	srcInode := wfs.inodeToPath.Lookup(util.FullPath("/src.txt"), 1, false, false, 0, true)
 	dstInode := wfs.inodeToPath.Lookup(util.FullPath("/dst.txt"), 1, false, false, 0, true)
-	srcHandle, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
+	srcHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
 		Name:       "src.txt",
 		Attributes: &filer_pb.FuseAttributes{FileMode: 0100644, FileSize: 5, Inode: srcInode},
 		Content:    []byte("hello"),
 	}, 0, 0)
-	dstHandle, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
+	dstHandle, _ := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
 		Name:       "dst.txt",
 		Attributes: &filer_pb.FuseAttributes{FileMode: 0100644, Inode: dstInode},
 	}, 0, 0)

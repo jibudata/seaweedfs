@@ -36,7 +36,7 @@ func TestMergeMovesReadViewOffReplacedChunks(t *testing.T) {
 	late := chunk(3, 1, 10, 4, 3)
 
 	entry := &filer_pb.Entry{Name: "file", Attributes: &filer_pb.FuseAttributes{Inode: 42, FileMode: 0644, FileSize: 12}, Chunks: []*filer_pb.FileChunk{a, b}}
-	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, entry, 0, 0)
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, entry, 0, 0)
 	snapshot := fh.GetEntry().GetChunks()
 
 	// Only the merge's chunk and the late write are still stored: a and b went

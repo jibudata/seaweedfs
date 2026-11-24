@@ -115,7 +115,7 @@ func newSlowDataFlush(t *testing.T, assignDelay, deadline time.Duration, stuckCo
 	data := []byte("the last shard of a checkpoint, written just before close()")
 	offset := int64(filer.TotalSize(stored))
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, &filer_pb.Entry{
 		Name:       "file",
 		Attributes: &filer_pb.FuseAttributes{FileSize: uint64(offset) + uint64(len(data)), FileMode: 0100644},
 		Chunks:     stored,
@@ -214,7 +214,7 @@ func TestTruncateFlushCommitsAfterSlowUpload(t *testing.T) {
 // spend the commit deadline either.
 func TestFlushCommitsAfterSlowManifestUpload(t *testing.T) {
 	// One chunk short of a batch: the chunk this flush uploads completes it.
-	stored := storedSmallChunks(filer.SmallChunkManifestBatch - 1)
+	stored := storedSmallChunks(filer.ManifestBatch - 1)
 	wfs, fh, fake := newSlowDataFlush(t, time.Second, 200*time.Millisecond, false, stored...)
 
 	status := wfs.Flush(nil, &fuse.FlushIn{InHeader: fuse.InHeader{NodeId: fh.inode}, Fh: uint64(fh.fh)})

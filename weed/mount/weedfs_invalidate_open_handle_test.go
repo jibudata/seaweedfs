@@ -2087,7 +2087,7 @@ func TestPeerAppendMergesIntoDirtyHandle(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1), 0, 0)
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1), 0, 0)
 	fh.AddChunks([]*filer_pb.FileChunk{{FileId: "1,0300000001", Offset: 2, Size: 1, ModifiedTsNs: 3}})
 	fh.dirtyMetadata = true
 	pagesBefore := fh.dirtyPages
@@ -2128,7 +2128,7 @@ func TestUnmergeablePeerChangeKeepsDirtyHandle(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1), 0, 0)
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1), 0, 0)
 	fh.AddChunks([]*filer_pb.FileChunk{{FileId: "1,0300000001", Offset: 2, Size: 1, ModifiedTsNs: 3}})
 	fh.dirtyMetadata = true
 	pagesBefore := fh.dirtyPages
@@ -2167,7 +2167,7 @@ func TestPeerEventKeepsPendingTruncate(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1, 2), 0, 0)
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1, 2), 0, 0)
 	fh.dirtyMetadata = true
 	fh.noteTruncate(1)
 	fh.noteRewrite()
@@ -2203,7 +2203,7 @@ func TestPeerTruncateWaitsForBufferedWrites(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1, 2), 0, 0)
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1, 2), 0, 0)
 	fh.dirtyMetadata = true
 	pagesBefore := fh.dirtyPages
 
@@ -2253,7 +2253,7 @@ func TestPeerReplacementKeepsDirtyHandle(t *testing.T) {
 			inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
 			base := flushConditionEntry(1)
 			wfs.mapPbIdFromFilerToLocal(base)
-			fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, base, 0, 0)
+			fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, base, 0, 0)
 			t.Cleanup(func() { fh.dirtyPages.Destroy() })
 			fh.AddChunks([]*filer_pb.FileChunk{{FileId: "1,0300000001", Offset: 2, Size: 1, ModifiedTsNs: 3}})
 			fh.dirtyMetadata = true
@@ -2307,7 +2307,7 @@ func TestPeerChmodReachesDirtyHandle(t *testing.T) {
 			wfs := newInvalidateTestWFS(t)
 
 			inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-			fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1), 0, 0)
+			fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1), 0, 0)
 			fh.AddChunks([]*filer_pb.FileChunk{{FileId: "1,0300000001", Offset: 2, Size: 1, ModifiedTsNs: 3}})
 			want := uint32(0600)
 			if name == "both-changed" {
@@ -2358,7 +2358,7 @@ func TestPeerInlineContentWaitsForBufferedWrite(t *testing.T) {
 		return e
 	}
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, empty(), 0, 0)
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, empty(), 0, 0)
 	fh.UpdateEntry(func(e *filer_pb.Entry) { e.Attributes.FileSize = 4 })
 	fh.dirtyMetadata = true
 

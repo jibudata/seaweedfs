@@ -3,6 +3,7 @@
 package mount
 
 import (
+	"context"
 	"runtime"
 	"strings"
 	"syscall"
@@ -114,6 +115,7 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 	if entry == nil {
 		return fuse.ENOENT
 	}
+	ctx := context.Background()
 	if path != "" {
 		var unlock func()
 		if path, fh, entry, unlock, status = wfs.lockNodePublication(ctx, input.NodeId, path, fh, entry); status != fuse.OK {
@@ -213,6 +215,7 @@ func (wfs *WFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr 
 	if entry == nil {
 		return fuse.OK
 	}
+	ctx := context.Background()
 	if path != "" {
 		var unlock func()
 		if path, fh, entry, unlock, status = wfs.lockNodePublication(ctx, header.NodeId, path, fh, entry); status != fuse.OK {

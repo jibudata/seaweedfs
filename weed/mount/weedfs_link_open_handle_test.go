@@ -180,7 +180,7 @@ func openLinkTestFile(t *testing.T) (*WFS, *hardLinkFiler, *FileHandle, uint64) 
 	})
 	inode := wfs.inodeToPath.Lookup("/tmp", 1, false, false, 42, true)
 	wfs.mapPbIdFromFilerToLocal(stored)
-	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, stored, stored.CommitTsNs, 0)
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, stored, stored.CommitTsNs, 0)
 	t.Cleanup(func() { fh.dirtyPages.Destroy() })
 	fh.RememberPath("/tmp")
 	return wfs, fake, fh, inode

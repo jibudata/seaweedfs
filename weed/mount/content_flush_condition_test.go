@@ -490,7 +490,7 @@ func TestContentFlushRepublishesUnchangedEntry(t *testing.T) {
 func TestRebaseEntryKeepsMergedSize(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1, 2), 0, 0)
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1, 2), 0, 0)
 	sent := proto.Clone(fh.GetEntry().GetEntry()).(*filer_pb.Entry)
 	merged := flushConditionEntry(1)
 	merged.Attributes.FileSize = 1
@@ -512,7 +512,7 @@ func TestRebaseEntryKeepsMergedSize(t *testing.T) {
 func TestRebaseEntryRetriesUnresolvedChunkView(t *testing.T) {
 	wfs := newInvalidateTestWFS(t)
 	inode := wfs.inodeToPath.Lookup(util.FullPath("/dir/file"), time.Now().Unix(), false, false, 0, false)
-	fh, _, _, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1), 0, 0)
+	fh, _ := wfs.fhMap.AcquireFileHandle(wfs, inode, flushConditionEntry(1), 0, 0)
 	lookupDown := true
 	group, err := filer.NewChunkGroup(func(ctx context.Context, fileId string) ([]string, error) {
 		if lookupDown {

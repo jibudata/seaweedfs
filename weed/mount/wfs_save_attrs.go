@@ -181,7 +181,7 @@ func (wfs *WFS) lockNodePublication(ctx context.Context, nodeId uint64, path uti
 			return path, fh, entry, func() {}, fuse.Status(syscall.EAGAIN)
 		}
 		var st fuse.Status
-		if path, fh, entry, st = wfs.maybeReadEntry(ctx, nodeId); st != fuse.OK || entry == nil || path == "" {
+		if path, fh, entry, st = wfs.maybeReadEntry(nodeId); st != fuse.OK || entry == nil || path == "" {
 			return path, fh, entry, func() {}, st
 		}
 	}

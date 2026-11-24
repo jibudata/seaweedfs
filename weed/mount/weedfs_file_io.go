@@ -64,10 +64,9 @@ import (
 	 * @param fi file information
 */
 func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut) (status fuse.Status) {
-	var fileHandle *FileHandle
-	fileHandle, status = wfs.AcquireHandle(in.NodeId, in.Flags, in.Uid, in.Gid)
+	fileHandle, openFh, status := wfs.AcquireOpenHandle(in.NodeId, in.Flags, in.Uid, in.Gid)
 	if status == fuse.OK {
-		out.Fh = uint64(fileHandle.fh)
+		out.Fh = uint64(openFh)
 		out.OpenFlags = 0
 
 		// For read-only opens, set FOPEN_KEEP_CACHE when the file's mtime

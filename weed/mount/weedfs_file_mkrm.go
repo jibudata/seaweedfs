@@ -96,7 +96,7 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	// For deferred creates, bypass AcquireHandle (which calls maybeReadEntry
 	// and would fail since the entry is not yet on the filer or in the meta cache).
 	// We already have the entry from createRegularFile, so create the handle directly.
-	fileHandle, existed := wfs.fhMap.AcquireFileHandle(wfs, inode, newEntry, 0, 0, in.Flags&syscall.O_APPEND != 0)
+	fileHandle, openFh, existed := wfs.fhMap.AcquireOpenFileHandle(wfs, inode, newEntry, 0, 0, in.Flags&syscall.O_APPEND != 0)
 	if existed {
 		// A create is authoritative for the entry it just made, so it takes
 		// effect even on a handle that outlived a previous incarnation.
@@ -125,7 +125,7 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 		}
 	}
 
-	out.Fh = uint64(fileHandle.fh)
+	out.Fh = uint64(openFh)
 	out.OpenFlags = 0
 
 	return fuse.OK
@@ -143,19 +143,19 @@ func (wfs *WFS) openExistingForCreate(in *fuse.CreateIn, entryFullPath util.Full
 		return fuse.Status(syscall.EEXIST)
 	}
 	inode := wfs.inodeToPath.Lookup(entryFullPath, entry.Attributes.Crtime, false, len(entry.HardLinkId) > 0, entry.Attributes.Inode, true)
-	fileHandle, status := wfs.AcquireHandle(inode, in.Flags, in.Uid, in.Gid)
+	fileHandle, openFh, status := wfs.AcquireOpenHandle(inode, in.Flags, in.Uid, in.Gid)
 	if status != fuse.OK {
 		return status
 	}
 	if in.Flags&syscall.O_TRUNC != 0 && in.Flags&fuse.O_ANYWRITE != 0 {
 		if code := wfs.truncateEntry(entryFullPath, entry); code != fuse.OK {
-			wfs.ReleaseHandle(fileHandle.fh)
+			wfs.ReleaseHandle(openFh)
 			return code
 		}
 		entry = fileHandle.GetEntry().GetEntry()
 	}
 	wfs.outputPbEntry(&out.EntryOut, inode, entry)
-	out.Fh = uint64(fileHandle.fh)
+	out.Fh = uint64(openFh)
 	out.OpenFlags = 0
 	return fuse.OK
 }
