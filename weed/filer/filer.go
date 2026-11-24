@@ -240,8 +240,16 @@ func (fs *Filer) GetMaster(ctx context.Context) pb.ServerAddress {
 	return fs.MasterClient.GetMaster(ctx)
 }
 
+// storeTransactionKey marks a context inside BeginTransaction, whatever key
+// the store itself attaches to it.
+type storeTransactionKey struct{}
+
 func (f *Filer) BeginTransaction(ctx context.Context) (context.Context, error) {
-	return f.Store.BeginTransaction(ctx)
+	txCtx, err := f.Store.BeginTransaction(ctx)
+	if err != nil {
+		return txCtx, err
+	}
+	return context.WithValue(txCtx, storeTransactionKey{}, true), nil
 }
 
 // TransactionCovers reports whether ctx is inside a store transaction that

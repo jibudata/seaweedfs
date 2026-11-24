@@ -35,9 +35,18 @@ type stubFilerStore struct {
 	kv              map[string][]byte
 	insertErr       error
 	findErr         error
+	findErrByPath   map[string]error
 	deleteErrByPath map[string]error
 	updateErr       error
 	deleteFolderErr error
+	kvPutErr        error
+	kvGetHook       func(key []byte)
+}
+
+func (s *stubFilerStore) setKvPutErr(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.kvPutErr = err
 }
 
 func newStubFilerStore() *stubFilerStore {
@@ -59,12 +68,18 @@ func (s *stubFilerStore) RollbackTransaction(context.Context) error { return nil
 func (s *stubFilerStore) KvPut(_ context.Context, key []byte, value []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.kvPutErr != nil {
+		return s.kvPutErr
+	}
 	s.kv[string(key)] = append([]byte(nil), value...)
 	return nil
 }
 func (s *stubFilerStore) KvGet(_ context.Context, key []byte) ([]byte, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.kvGetHook != nil {
+		s.kvGetHook(key)
+	}
 	value, found := s.kv[string(key)]
 	if !found {
 		return nil, ErrKvNotFound
@@ -183,6 +198,9 @@ func (s *stubFilerStore) UpdateEntry(_ context.Context, entry *Entry) error {
 func (s *stubFilerStore) FindEntry(_ context.Context, p util.FullPath) (*Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.findErrByPath[string(p)]; err != nil {
+		return nil, err
+	}
 	if s.findErr != nil {
 		return nil, s.findErr
 	}

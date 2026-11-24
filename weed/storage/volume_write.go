@@ -195,9 +195,6 @@ func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offs
 	}
 
 	lastAppendAtNs := v.lastAppendAtNs
-	lastWriteAppendAtNs := v.lastWriteAppendAtNs
-	lastWriteNeedleKey := v.lastWriteNeedleKey
-	lastWriteDeleted := v.lastWriteDeleted
 	lastModifiedTsSeconds := v.lastModifiedTsSeconds
 
 	offset, size, isUnchanged, err = v.appendWriteRequest(n, checkCookie, fsync)
@@ -214,9 +211,6 @@ func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offs
 	if syncErr != nil {
 		v.checkReadWriteError(syncErr)
 		v.lastAppendAtNs = lastAppendAtNs
-		v.lastWriteAppendAtNs = lastWriteAppendAtNs
-		v.lastWriteNeedleKey = lastWriteNeedleKey
-		v.lastWriteDeleted = lastWriteDeleted
 		v.lastModifiedTsSeconds = lastModifiedTsSeconds
 		if !isUnchanged {
 			// Nothing was published, so the whole rollback is taking the
@@ -449,14 +443,7 @@ func (v *Volume) appendDeleteRequest(n *needle.Needle) (size Size, offset uint64
 }
 
 func (v *Volume) publishDeleteRequest(n *needle.Needle, offset uint64) error {
-	if err := v.nm.Delete(n.Id, ToOffset(int64(offset))); err != nil {
-		return err
-	}
-	if n.Id == v.lastWriteNeedleKey {
-		v.lastWriteAppendAtNs, v.lastWriteNeedleKey = 0, 0
-		v.lastWriteDeleted = true
-	}
-	return nil
+	return v.nm.Delete(n.Id, ToOffset(int64(offset)))
 }
 
 func (v *Volume) processBatch(currentRequests []*needle.AsyncRequest) {

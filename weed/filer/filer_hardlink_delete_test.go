@@ -23,6 +23,17 @@ var storeRefusal = errors.New("write conflict { start_ts:463, conflict_start_ts:
 
 const linkedChunk = "3,0c03"
 
+func (f *Filer) pendingDeletionCount() int {
+	var items []string
+	f.FileIdDeletionQueue.Consume(func(batch []string) {
+		items = append(items, batch...)
+	})
+	if len(items) > 0 {
+		f.FileIdDeletionQueue.EnQueue(items...)
+	}
+	return len(items)
+}
+
 // linkedFile puts in store a file with the given names: the hard link record
 // counting them all and holding the file's one chunk, and a row for each name.
 func linkedFile(t *testing.T, store *stubFilerStore, names ...util.FullPath) HardLinkId {
@@ -195,9 +206,9 @@ func TestDeleteEntryRefusedAndSentAgainKeepsChunksForOtherName(t *testing.T) {
 	id := linkedFile(t, store, "/d/a", "/d/b")
 
 	store.deleteErrByPath["/d/a"] = storeRefusal
-	require.ErrorContains(t, f.DeleteEntryMetaAndData(ctx, "/d/a", false, false, true, false, nil, time.Time{}), "write conflict")
+	require.ErrorContains(t, f.DeleteEntryMetaAndData(ctx, "/d/a", false, false, true, false, nil, 0), "write conflict")
 	delete(store.deleteErrByPath, "/d/a")
-	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/a", false, false, true, false, nil, time.Time{}))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/a", false, false, true, false, nil, 0))
 
 	require.Equal(t, 0, f.pendingDeletionCount(), "chunks deleted while /d/b still reads them")
 	b, err := f.FindEntry(ctx, "/d/b")
@@ -205,7 +216,7 @@ func TestDeleteEntryRefusedAndSentAgainKeepsChunksForOtherName(t *testing.T) {
 	require.Equal(t, int32(1), b.HardLinkCounter)
 	require.Equal(t, linkedChunk, b.GetChunks()[0].GetFileIdString())
 
-	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/b", false, false, true, false, nil, time.Time{}))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/b", false, false, true, false, nil, 0))
 	require.Equal(t, 1, f.pendingDeletionCount())
 	require.Equal(t, int32(0), linkCount(t, store, id))
 }
@@ -223,7 +234,7 @@ func TestDeleteEntryKeepsChunksOfLinkAddedMeanwhile(t *testing.T) {
 		store.entries["/d/c"] = &Entry{FullPath: "/d/c", Attr: Attr{Mode: 0o644}, HardLinkId: id, HardLinkCounter: 2}
 	})
 
-	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/a", false, false, true, false, nil, time.Time{}))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/a", false, false, true, false, nil, 0))
 	store.kvGetHook = nil
 	require.Equal(t, 0, f.pendingDeletionCount(), "chunks deleted while /d/c reads them")
 	require.Equal(t, int32(1), linkCount(t, store, id))
@@ -243,7 +254,7 @@ func TestDeleteEntryTwiceAtOnceKeepsChunks(t *testing.T) {
 		setLinkCount(t, store, id, 1)
 	})
 
-	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/a", false, false, true, false, nil, time.Time{}))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/a", false, false, true, false, nil, 0))
 	store.kvGetHook = nil
 	require.Equal(t, 0, f.pendingDeletionCount(), "chunks deleted while /d/b still reads them")
 }
@@ -261,7 +272,7 @@ func TestDeleteEntryOfANameGoneSinceItsLookupKeepsTheOtherLink(t *testing.T) {
 		setLinkCount(t, store, id, 1)
 	})
 
-	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/a", false, false, true, false, nil, time.Time{}))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/a", false, false, true, false, nil, 0))
 	store.kvGetHook = nil
 	require.Equal(t, 0, f.pendingDeletionCount(), "chunks deleted while /d/b still reads them")
 	require.Equal(t, int32(1), linkCount(t, store, id))
@@ -278,7 +289,7 @@ func TestDeleteEntryReportsAFailedSecondLookup(t *testing.T) {
 		store.findErrByPath = map[string]error{"/d/a": storeRefusal}
 	})
 
-	require.Error(t, f.DeleteEntryMetaAndData(ctx, "/d/a", false, false, true, false, nil, time.Time{}))
+	require.Error(t, f.DeleteEntryMetaAndData(ctx, "/d/a", false, false, true, false, nil, 0))
 	store.kvGetHook = nil
 	require.Contains(t, store.entries, "/d/a")
 	require.Equal(t, int32(2), linkCount(t, store, id))
@@ -309,11 +320,11 @@ func TestRecursiveDeleteRefusedByStoreKeepsHardLinkCount(t *testing.T) {
 	id := linkedFile(t, store, "/d/sub/a", "/d/b")
 
 	store.deleteErrByPath["/d/sub/a"] = storeRefusal
-	require.ErrorContains(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, time.Time{}), "write conflict")
+	require.ErrorContains(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, 0), "write conflict")
 	require.Equal(t, int32(2), linkCount(t, store, id), "the refused delete took a link off")
 
 	delete(store.deleteErrByPath, "/d/sub/a")
-	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, time.Time{}))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, 0))
 	require.Equal(t, int32(1), linkCount(t, store, id))
 	require.Equal(t, 0, f.pendingDeletionCount(), "chunks deleted while /d/b still reads them")
 }
@@ -331,12 +342,12 @@ func TestRecursiveDeleteFailingAfterItsLinkedChildTookItsLinkOff(t *testing.T) {
 	id := linkedFile(t, store, "/d/sub/a", "/d/b")
 
 	store.deleteFolderErr = storeRefusal
-	require.ErrorContains(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, time.Time{}), "write conflict")
+	require.ErrorContains(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, 0), "write conflict")
 	require.Equal(t, int32(1), linkCount(t, store, id))
 
 	store.deleteFolderErr = nil
-	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, time.Time{}))
-	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/b", false, false, true, false, nil, time.Time{}))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, 0))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/b", false, false, true, false, nil, 0))
 	require.Equal(t, int32(0), linkCount(t, store, id))
 	require.Equal(t, 1, f.pendingDeletionCount())
 }
@@ -353,7 +364,7 @@ func TestRecursiveDeleteFailingAfterALastLinkWentDeletesItsChunks(t *testing.T) 
 	id := linkedFile(t, store, "/d/sub/a")
 
 	store.deleteFolderErr = storeRefusal
-	require.ErrorContains(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, time.Time{}), "write conflict")
+	require.ErrorContains(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, 0), "write conflict")
 	require.Equal(t, int32(0), linkCount(t, store, id))
 	require.Equal(t, 1, f.pendingDeletionCount(), "the chunks of the file's last link were left behind")
 }
@@ -369,7 +380,7 @@ func TestRecursiveDeleteOfEveryNameDeletesChunksOnce(t *testing.T) {
 	}
 	id := linkedFile(t, store, "/d/sub/x/a", "/d/sub/y/b")
 
-	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, time.Time{}))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, 0))
 	require.Equal(t, int32(0), linkCount(t, store, id))
 	require.Equal(t, 1, f.pendingDeletionCount())
 }
@@ -389,7 +400,7 @@ func TestRecursiveDeletesAtOnceKeepChunksOfANameOutside(t *testing.T) {
 		setLinkCount(t, store, id, 1)
 	})
 
-	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, time.Time{}))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, 0))
 	store.kvGetHook = nil
 	require.Equal(t, 0, f.pendingDeletionCount(), "chunks deleted while /d/b still reads them")
 }
@@ -408,7 +419,7 @@ func TestRecursiveDeleteOfANameGoneSinceItsLookupKeepsTheOtherLink(t *testing.T)
 		setLinkCount(t, store, id, 1)
 	})
 
-	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, time.Time{}))
+	require.NoError(t, f.DeleteEntryMetaAndData(ctx, "/d/sub", true, false, true, false, nil, 0))
 	store.kvGetHook = nil
 	require.Equal(t, 0, f.pendingDeletionCount(), "chunks deleted while /d/b still reads them")
 	require.Equal(t, int32(1), linkCount(t, store, id))
