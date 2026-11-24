@@ -436,6 +436,7 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 	buf := mem.Allocate(256 * 1024)
 	defer mem.Free(buf)
 
+	remaining := size
 	for {
 		// Check for context cancellation before each read
 		select {
@@ -444,9 +445,19 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 		default:
 		}
 
-		m, err = reader.Read(buf)
+		readBuf := buf
+		if size > 0 && remaining < len(readBuf) {
+			readBuf = buf[:remaining]
+		}
+		m, err = reader.Read(readBuf)
 		if m > 0 {
-			fn(buf[:m])
+			fn(readBuf[:m])
+			if size > 0 {
+				remaining -= m
+				if remaining == 0 {
+					return false, nil
+				}
+			}
 		}
 		if err == io.EOF {
 			return false, nil
@@ -473,15 +484,17 @@ func readEncryptedUrl(ctx context.Context, fileUrl, jwt string, cipherKey []byte
 			glog.V(0).InfofCtx(ctx, "unzip decrypt %s: %v", fileUrl, err)
 		}
 	}
+	if size <= 0 {
+		if isFullChunk {
+			fn(decryptedData)
+		}
+		return false, nil
+	}
 	if len(decryptedData) < int(offset)+size {
 		return false, fmt.Errorf("read decrypted %s size %d [%d, %d)", fileUrl, len(decryptedData), offset, int(offset)+size)
 	}
-	if isFullChunk {
-		fn(decryptedData)
-	} else {
-		sliceEnd := int(offset) + size
-		fn(decryptedData[int(offset):sliceEnd])
-	}
+	sliceEnd := int(offset) + size
+	fn(decryptedData[int(offset):sliceEnd])
 	return false, nil
 }
 
