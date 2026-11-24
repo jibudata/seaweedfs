@@ -32,6 +32,27 @@ type InodeToPath struct {
 	wasCachedDirs  map[util.FullPath]uint64
 	wasCachedOrder []wasCachedEntry
 	wasCachedGen   uint64
+	// forgottenInodes retains a bounded history of live inode<->path mappings
+	// after a kernel FUSE_FORGET drops nlookup to 0. When a FUSE mount is
+	// re-exported over NFS (e.g. NFS-Ganesha FSAL_VFS via open_by_handle_at),
+	// kernel icache eviction (drop_caches=2/3 or VFS shrinker) sends
+	// FUSE_FORGET and then recovers the handle via FUSE_LOOKUP(nodeid, ".")
+	// and FUSE_LOOKUP(nodeid, ".."). Removed or overwritten inodes (whose
+	// path is already empty at Forget time, or later removed by RemovePath /
+	// MovePath) are purged from this table so they continue to return
+	// ENOENT / ESTALE.
+	forgottenInodes     map[uint64]util.FullPath
+	forgottenPath2Inode map[util.FullPath]uint64
+	forgottenGen        map[uint64]uint64
+	forgottenOrder      []forgottenInodeEntry
+	forgottenNextGen    uint64
+}
+
+const maxForgottenInodes = 65536
+
+type forgottenInodeEntry struct {
+	inode uint64
+	gen   uint64
 }
 
 // wasCachedEntry pairs a queued path with the insertion generation that put
@@ -153,12 +174,15 @@ func (ie *InodeEntry) removeOnePath(p util.FullPath) bool {
 
 func NewInodeToPath(root util.FullPath, ttlSec int) *InodeToPath {
 	t := &InodeToPath{
-		inode2path:      make(map[uint64]*InodeEntry),
-		path2inode:      make(map[util.FullPath]uint64),
-		dirStates:       make(map[uint64]*dirState),
-		dirPaths:        make(map[util.FullPath]*dirState),
-		wasCachedDirs:   make(map[util.FullPath]uint64),
-		cacheMetaTtlSec: time.Second * time.Duration(ttlSec),
+		inode2path:          make(map[uint64]*InodeEntry),
+		path2inode:          make(map[util.FullPath]uint64),
+		dirStates:           make(map[uint64]*dirState),
+		dirPaths:            make(map[util.FullPath]*dirState),
+		wasCachedDirs:       make(map[util.FullPath]uint64),
+		forgottenInodes:     make(map[uint64]util.FullPath),
+		forgottenPath2Inode: make(map[util.FullPath]uint64),
+		forgottenGen:        make(map[uint64]uint64),
+		cacheMetaTtlSec:     time.Second * time.Duration(ttlSec),
 	}
 	t.inode2path[1] = &InodeEntry{
 		path:    root,
@@ -168,6 +192,59 @@ func NewInodeToPath(root util.FullPath, ttlSec int) *InodeToPath {
 	t.path2inode[root] = 1
 
 	return t
+}
+
+func (i *InodeToPath) rememberForgottenInode(inode uint64, path util.FullPath) {
+	if path == "" || inode <= 1 {
+		return
+	}
+	if oldPath, ok := i.forgottenInodes[inode]; ok && oldPath != path {
+		if i.forgottenPath2Inode[oldPath] == inode {
+			delete(i.forgottenPath2Inode, oldPath)
+		}
+	}
+	if oldInode, ok := i.forgottenPath2Inode[path]; ok && oldInode != inode {
+		delete(i.forgottenInodes, oldInode)
+		delete(i.forgottenGen, oldInode)
+	}
+	i.forgottenNextGen++
+	i.forgottenInodes[inode] = path
+	i.forgottenPath2Inode[path] = inode
+	i.forgottenGen[inode] = i.forgottenNextGen
+	i.forgottenOrder = append(i.forgottenOrder, forgottenInodeEntry{inode: inode, gen: i.forgottenNextGen})
+	for len(i.forgottenOrder) > maxForgottenInodes {
+		oldest := i.forgottenOrder[0]
+		i.forgottenOrder = i.forgottenOrder[1:]
+		if gen, ok := i.forgottenGen[oldest.inode]; ok && gen == oldest.gen {
+			if p, exists := i.forgottenInodes[oldest.inode]; exists {
+				if i.forgottenPath2Inode[p] == oldest.inode {
+					delete(i.forgottenPath2Inode, p)
+				}
+				delete(i.forgottenInodes, oldest.inode)
+			}
+			delete(i.forgottenGen, oldest.inode)
+		}
+	}
+}
+
+func (i *InodeToPath) dropForgottenByInode(inode uint64) {
+	if p, ok := i.forgottenInodes[inode]; ok {
+		if i.forgottenPath2Inode[p] == inode {
+			delete(i.forgottenPath2Inode, p)
+		}
+		delete(i.forgottenInodes, inode)
+		delete(i.forgottenGen, inode)
+	}
+}
+
+func (i *InodeToPath) dropForgottenByPath(path util.FullPath) {
+	if inode, ok := i.forgottenPath2Inode[path]; ok {
+		delete(i.forgottenPath2Inode, path)
+		if i.forgottenInodes[inode] == path {
+			delete(i.forgottenInodes, inode)
+			delete(i.forgottenGen, inode)
+		}
+	}
 }
 
 // EnsurePath make sure the full path is tracked, used by symlink.
@@ -188,7 +265,9 @@ func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory boo
 	defer i.Unlock()
 	inode, found := i.path2inode[path]
 	if !found {
-		if possibleInode == 0 {
+		if forgottenInode, ok := i.forgottenPath2Inode[path]; ok && (possibleInode == 0 || possibleInode == forgottenInode) {
+			inode = forgottenInode
+		} else if possibleInode == 0 {
 			inode = path.AsInode(unixTime)
 		} else {
 			inode = possibleInode
@@ -199,6 +278,8 @@ func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory boo
 			}
 		}
 	}
+	i.dropForgottenByPath(path)
+	i.dropForgottenByInode(inode)
 	i.path2inode[path] = inode
 
 	if ie, known := i.inode2path[inode]; known {
@@ -245,6 +326,9 @@ func (i *InodeToPath) IncrementNlookup(inode uint64) bool {
 func (i *InodeToPath) InodeForListing(path util.FullPath, unixTime int64, possibleInode uint64) uint64 {
 	i.RLock()
 	inode, found := i.path2inode[path]
+	if !found {
+		inode, found = i.forgottenPath2Inode[path]
+	}
 	i.RUnlock()
 	if found {
 		return inode
@@ -286,10 +370,16 @@ func (i *InodeToPath) GetPath(inode uint64) (util.FullPath, fuse.Status) {
 	i.RLock()
 	defer i.RUnlock()
 	path, found := i.inode2path[inode]
-	if !found || path.path == "" {
-		return "", fuse.ENOENT
+	if found {
+		if path.path == "" {
+			return "", fuse.ENOENT
+		}
+		return path.path, fuse.OK
 	}
-	return path.path, fuse.OK
+	if forgottenPath, ok := i.forgottenInodes[inode]; ok && forgottenPath != "" {
+		return forgottenPath, fuse.OK
+	}
+	return "", fuse.ENOENT
 }
 
 // GetAllPaths returns a copy of all paths associated with an inode. For a
@@ -624,6 +714,7 @@ func (i *InodeToPath) RemovePath(path util.FullPath, onStillReferenced func(inod
 			onStillReferenced(inode)
 		}
 	}
+	i.dropForgottenByPath(path)
 	// A deleted name must never justify a listing rebuild; the record is
 	// keyed by path, so drop it even when the inode was already forgotten.
 	delete(i.wasCachedDirs, path)
@@ -682,6 +773,8 @@ func (i *InodeToPath) MovePath(sourcePath, targetPath util.FullPath) (sourceInod
 		delete(i.path2inode, targetPath)
 		i.dropDirPath(targetInode)
 	}
+	i.dropForgottenByPath(sourcePath)
+	i.dropForgottenByPath(targetPath)
 	// The rebuild eligibility travels with the directory: the target keeps it
 	// when the source earned it, and an overwritten target loses its own.
 	_, sourceWasCached := i.wasCachedDirs[sourcePath]
@@ -725,6 +818,7 @@ func (i *InodeToPath) Forget(inode, nlookup uint64, onRelease func(inode uint64)
 		}
 		glog.V(4).Infof("kernel forget: inode %d path %v nlookup %d", inode, path.path, path.nlookup)
 		if path.nlookup == 0 {
+			rememberedPath := path.path
 			if onRelease != nil {
 				onRelease(inode)
 			}
@@ -741,6 +835,11 @@ func (i *InodeToPath) Forget(inode, nlookup uint64, onRelease func(inode uint64)
 			delete(i.inode2path, inode)
 			i.dropDirPath(inode)
 			delete(i.dirStates, inode)
+			if rememberedPath != "" {
+				i.rememberForgottenInode(inode, rememberedPath)
+			} else {
+				i.dropForgottenByInode(inode)
+			}
 		} else {
 			glog.V(4).Infof("kernel forget but nlookup not zero: inode %d path %v nlookup %d", inode, path.path, path.nlookup)
 		}
