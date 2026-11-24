@@ -127,7 +127,7 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 	}
 
 	//collect all the chunks of this layer and delete them together at the end
-	var chunksToDelete []*filer_pb.FileChunk
+	var chunksToDelete, fsyncChunksToDelete []*filer_pb.FileChunk
 	lastFileName := ""
 	includeLastFile := false
 	listedChildren := !isDeletingBucket || !f.Store.CanDropWholeBucket()
@@ -166,13 +166,17 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 						break
 					}
 					f.NotifyUpdateEvent(ctx, sub, nil, shouldDeleteChunks, isFromOtherCluster, nil)
+					subChunksToDelete := &chunksToDelete
+					if shouldDeleteChunks && f.FilerConf.MatchStorageRule(string(sub.FullPath)).GetFsync() {
+						subChunksToDelete = &fsyncChunksToDelete
+					}
 					if len(sub.HardLinkId) != 0 {
 						// it goes now, the way a single delete takes it;
 						// DeleteFolderChildren below takes the other children
 						err = f.deleteLinkedName(ctx, sub, shouldDeleteChunks)
 					} else {
 						if shouldDeleteChunks {
-							chunksToDelete = append(chunksToDelete, sub.GetChunks()...)
+							*subChunksToDelete = append(*subChunksToDelete, sub.GetChunks()...)
 						}
 					}
 				}
@@ -198,7 +202,11 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 	}
 
 	f.NotifyUpdateEvent(ctx, entry, nil, shouldDeleteChunks, isFromOtherCluster, signatures)
-	f.DeleteChunks(ctx, entry.FullPath, chunksToDelete)
+	if !f.FilerConf.MatchStorageRule(string(entry.FullPath)).DisableChunkDeletion {
+		// a child's own path decides fsync, as when it is deleted alone
+		f.doDeleteChunks(ctx, chunksToDelete, false)
+		f.doDeleteChunks(ctx, fsyncChunksToDelete, true)
+	}
 
 	return nil
 }

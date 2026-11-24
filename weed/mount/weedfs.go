@@ -680,23 +680,48 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 		wfs.waitForPendingAsyncFlush(inode)
 	}
 
+	// A deferred create stays a local placeholder, a handle with no filer
+	// base, until a flush publishes it, and that flush can land while this
+	// lookup is in flight. Note the path's handle if it is one, resolved
+	// after the wait above.
+	var placeholder *FileHandle
+	if inode, found := wfs.inodeToPath.GetInode(fullpath); found {
+		if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound && fh.baseEntry.Load() == nil {
+			placeholder = fh
+		}
+	}
+
 	// Directory not cached - fetch directly from filer without caching the entire directory.
 	glog.V(4).Infof("lookupEntry fetching from filer %s", fullpath)
-	var entry *filer_pb.Entry
-	var lookupVersion entryVersion
-	lookupDir, lookupName := fullpath.DirAndName()
-	err := wfs.withFilerClient(context.Background(), false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
-		resp, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
-			Directory: lookupDir,
-			Name:      lookupName,
-		})
-		if lookupErr != nil {
-			return lookupErr
+	ctx := context.Background()
+	entry, lookupVersion, err := wfs.lookupEntryOnFiler(ctx, fullpath)
+	// For a placeholder the filer may answer not-found from a read taken
+	// before the publish committed, and the flush may clear the dirty flag
+	// before the answer arrives. One look at the handle's base decides.
+	if err == filer_pb.ErrNotFound && placeholder != nil && ctx.Err() == nil {
+		if inode, found := wfs.inodeToPath.GetInode(fullpath); found && inode == placeholder.inode {
+			if placeholder.baseEntry.Load() == nil {
+				// Still unpublished: the filer cannot have the file yet. The
+				// copy the create cached answers while it is still this
+				// file's; otherwise a snapshot of the handle does.
+				if cached, cachedTsNs, cacheErr := wfs.metaCache.FindEntry(ctx, fullpath); cacheErr == nil && cached != nil && cached.Attr.Inode == placeholder.inode {
+					return cached, entryVersion{tsNs: cachedTsNs}, fuse.OK
+				}
+				if localEntry := placeholder.entrySnapshot(dir); localEntry != nil {
+					return localEntry, entryVersion{}, fuse.OK
+				}
+			} else {
+				// A base comes only from the filer, here once it acknowledged
+				// the publish. This request leaves after that, so its answer
+				// is current: a miss means the file was removed since.
+				glog.V(1).Infof("lookupEntry %s: published while the lookup was in flight, asking the filer again", fullpath)
+				entry, lookupVersion, err = wfs.lookupEntryOnFiler(ctx, fullpath)
+				if err == filer_pb.ErrNotFound && ctx.Err() == nil {
+					return nil, entryVersion{}, fuse.ENOENT
+				}
+			}
 		}
-		entry = resp.Entry
-		lookupVersion = entryVersion{tsNs: resp.LogTsNs, signature: resp.LogSignature}
-		return nil
-	})
+	}
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
 			// The entry may exist in the local store from a deferred create
@@ -767,6 +792,26 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 		entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.FilerToLocal(entry.Attributes.Uid, entry.Attributes.Gid)
 	}
 	return filer.FromPbEntry(dir, entry), lookupVersion, fuse.OK
+}
+
+// lookupEntryOnFiler asks the filer for fullpath, bypassing the local cache.
+func (wfs *WFS) lookupEntryOnFiler(ctx context.Context, fullpath util.FullPath) (*filer_pb.Entry, entryVersion, error) {
+	dir, name := fullpath.DirAndName()
+	var entry *filer_pb.Entry
+	var version entryVersion
+	err := wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+		resp, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: dir,
+			Name:      name,
+		})
+		if lookupErr != nil {
+			return lookupErr
+		}
+		entry = resp.Entry
+		version = entryVersion{tsNs: resp.LogTsNs, signature: resp.LogSignature}
+		return nil
+	})
+	return entry, version, err
 }
 
 // entryVersion is a filer log position together with the clock domain it
@@ -863,6 +908,12 @@ func (wfs *WFS) onEntryInvalidation(invalidation meta_cache.EntryInvalidation) {
 	handled, replacedInode := wfs.invalidateOpenFileHandle(invalidation)
 	if !handled && invalidation.RenamedTo != "" {
 		_, replacedInode = wfs.inodeToPath.MovePath(invalidation.Path, invalidation.RenamedTo)
+	} else if !handled && invalidation.Deleted && len(invalidation.LiveHardLinkId) > 0 {
+		// Otherwise the next open by nodeid resolves to the deleted name. A
+		// newer stored entry means something has taken the name since.
+		if _, _, newer := wfs.cachedEntrySince(invalidation.Path, invalidation.TsNs); !newer {
+			wfs.inodeToPath.RemoveAlias(invalidation.Path)
+		}
 	}
 	// A rename over an existing file destroys it, so its handle must not flush
 	// the old content back over what took the name. Marked from here, holding
@@ -960,12 +1011,9 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	// hit there is a stale leftover — use the event entry instead.
 	var candidate *filer_pb.Entry
 	candidateTsNs := eventTsNs
-	dir, _ := filePath.DirAndName()
-	if wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
-		if storeEntry, storeVersionTsNs, findErr := wfs.metaCache.FindEntry(context.Background(), filePath); findErr == nil && storeEntry != nil && storeVersionTsNs >= eventTsNs {
-			candidate = storeEntry.ToProtoEntry()
-			candidateTsNs = storeVersionTsNs
-		}
+	if storeEntry, storeVersionTsNs, found := wfs.cachedEntrySince(filePath, eventTsNs); found {
+		candidate = storeEntry.ToProtoEntry()
+		candidateTsNs = storeVersionTsNs
 	}
 	if candidate == nil && eventEntry != nil {
 		candidate = proto.Clone(eventEntry).(*filer_pb.Entry)
@@ -984,6 +1032,12 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		// so no flush recreates the unlinked name. Either way the entry and
 		// dirty pages stay, so the open fd still reads its buffered writes.
 		if invalidation.Deleted {
+			// The next flush reads the survivor's stored entry before
+			// publishing, so the version stays where it was.
+			if len(invalidation.LiveHardLinkId) > 0 && wfs.followSurvivingLink(fh, filePath) {
+				fh.linkRefresh = invalidation.LiveHardLinkId
+				return
+			}
 			fh.isDeleted = true
 			fh.deleteEpoch++
 		}
@@ -1026,6 +1080,31 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	fh.baseEntry.Store(proto.Clone(candidate).(*filer_pb.Entry))
 	fh.advanceEntryVersion(candidateTsNs, 0)
 	return
+}
+
+// cachedEntrySince returns the meta cache's entry at path when its directory is
+// cached and the entry is no older than tsNs.
+func (wfs *WFS) cachedEntrySince(path util.FullPath, tsNs int64) (*filer.Entry, int64, bool) {
+	dir, _ := path.DirAndName()
+	if !wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
+		return nil, 0, false
+	}
+	entry, versionTsNs, err := wfs.metaCache.FindEntry(context.Background(), path)
+	if err != nil || entry == nil || versionTsNs < tsNs {
+		return nil, 0, false
+	}
+	return entry, versionTsNs, true
+}
+
+// followSurvivingLink drops a hard link name another client deleted and
+// keeps the handle on a name of the inode this mount still knows, reporting
+// false when it knows none.
+func (wfs *WFS) followSurvivingLink(fh *FileHandle, removed util.FullPath) bool {
+	survivor, ok := wfs.inodeToPath.RemoveAlias(removed)
+	if ok {
+		fh.RememberPath(survivor)
+	}
+	return ok
 }
 
 func (wfs *WFS) LookupFn() wdclient.LookupFileIdFunctionType {

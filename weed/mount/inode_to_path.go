@@ -176,9 +176,13 @@ func (i *InodeToPath) Lookup(path util.FullPath, unixTime int64, isDirectory boo
 	}
 	i.path2inode[path] = inode
 
-	if _, found := i.inode2path[inode]; found {
+	if ie, known := i.inode2path[inode]; known {
+		// Another name of a hard link the table already holds.
+		if !found {
+			ie.addPath(path)
+		}
 		if isLookup {
-			i.inode2path[inode].nlookup++
+			ie.nlookup++
 		}
 	} else {
 		nlookup := uint64(0)
@@ -531,6 +535,32 @@ func (i *InodeToPath) RemovePath(path util.FullPath, onStillReferenced func(inod
 			onStillReferenced(inode)
 		}
 	}
+}
+
+// RemoveAlias drops a name only while its inode keeps another one, returning
+// the inode's primary path afterwards. A sole name stays for a delayed rename
+// to move.
+func (i *InodeToPath) RemoveAlias(path util.FullPath) (util.FullPath, bool) {
+	i.Lock()
+	defer i.Unlock()
+	inode, found := i.path2inode[path]
+	if !found {
+		return "", false
+	}
+	ie := i.inode2path[inode]
+	if ie == nil {
+		return "", false
+	}
+	survives := false
+	for _, p := range ie.appendPaths(nil) {
+		survives = survives || p != path
+	}
+	if !survives {
+		return "", false
+	}
+	delete(i.path2inode, path)
+	ie.removeOnePath(path)
+	return ie.path, true
 }
 
 func (i *InodeToPath) removePathFromInode2Path(inode uint64, path util.FullPath) {

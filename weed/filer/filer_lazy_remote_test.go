@@ -40,6 +40,8 @@ type stubFilerStore struct {
 	updateErr       error
 	deleteFolderErr error
 	kvPutErr        error
+	kvGetErr        error
+	kvDeleteErr     error
 	kvGetHook       func(key []byte)
 }
 
@@ -80,6 +82,9 @@ func (s *stubFilerStore) KvGet(_ context.Context, key []byte) ([]byte, error) {
 	if s.kvGetHook != nil {
 		s.kvGetHook(key)
 	}
+	if s.kvGetErr != nil {
+		return nil, s.kvGetErr
+	}
 	value, found := s.kv[string(key)]
 	if !found {
 		return nil, ErrKvNotFound
@@ -89,6 +94,9 @@ func (s *stubFilerStore) KvGet(_ context.Context, key []byte) ([]byte, error) {
 func (s *stubFilerStore) KvDelete(_ context.Context, key []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.kvDeleteErr != nil {
+		return s.kvDeleteErr
+	}
 	delete(s.kv, string(key))
 	return nil
 }

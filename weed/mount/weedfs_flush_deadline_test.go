@@ -214,7 +214,7 @@ func TestTruncateFlushCommitsAfterSlowUpload(t *testing.T) {
 // spend the commit deadline either.
 func TestFlushCommitsAfterSlowManifestUpload(t *testing.T) {
 	// One chunk short of a batch: the chunk this flush uploads completes it.
-	stored := storedSmallChunks(filer.ManifestBatch - 1)
+	stored := storedSmallChunks(filer.SmallChunkManifestBatch - 1)
 	wfs, fh, fake := newSlowDataFlush(t, time.Second, 200*time.Millisecond, false, stored...)
 
 	status := wfs.Flush(nil, &fuse.FlushIn{InHeader: fuse.InHeader{NodeId: fh.inode}, Fh: uint64(fh.fh)})

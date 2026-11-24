@@ -23,17 +23,6 @@ var storeRefusal = errors.New("write conflict { start_ts:463, conflict_start_ts:
 
 const linkedChunk = "3,0c03"
 
-func (f *Filer) pendingDeletionCount() int {
-	var items []string
-	f.FileIdDeletionQueue.Consume(func(batch []string) {
-		items = append(items, batch...)
-	})
-	if len(items) > 0 {
-		f.FileIdDeletionQueue.EnQueue(items...)
-	}
-	return len(items)
-}
-
 // linkedFile puts in store a file with the given names: the hard link record
 // counting them all and holding the file's one chunk, and a row for each name.
 func linkedFile(t *testing.T, store *stubFilerStore, names ...util.FullPath) HardLinkId {
