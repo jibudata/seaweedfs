@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -60,7 +61,7 @@ func (v *Volume) destroyLocked(onlyEmpty bool, onlyGarbage bool, keepRemoteData 
 		return
 	}
 	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
-		err = fmt.Errorf("volume %d is compacting", v.Id)
+		err = v.compactingError()
 		return
 	}
 	v.stopWorker()
@@ -223,17 +224,40 @@ func (v *Volume) syncWrite(n *needle.Needle, checkCookie bool, fsync bool) (offs
 		return 0, 0, false, syncErr
 	}
 	if !isUnchanged {
-		err = v.publishWriteRequest(n, offset, fsync)
+		if err = v.publishWriteRequest(n, offset, fsync); err == nil {
+			err = v.dropCancelledWrite(n, offset)
+		}
 	}
 	// The .idx row goes down before the write is acknowledged, same as the
 	// .dat record above; the access lock is dropped for the fsync the same
 	// way, since the row is already published.
 	v.dataFileAccessLock.Unlock()
-	if idxErr := v.syncIndex(); err == nil {
+	var idxErr error
+	if errors.Is(err, ErrorDeleted) {
+		idxErr = v.syncTakenBack(backend)
+	}
+	if idxErr == nil {
+		idxErr = v.syncIndex()
+	}
+	if err == nil {
 		err = idxErr
 	}
 	v.dataFileAccessLock.Lock()
 	return
+}
+
+// syncTakenBack flushes the tombstones dropCancelledWrite appended after the
+// .dat sync, so their .idx rows never outlive them. Like syncIndex, a failure
+// cannot be undone and stops the volume taking writes.
+func (v *Volume) syncTakenBack(backend backend.BackendStorageFile) error {
+	if err := backend.Sync(); err != nil {
+		v.checkReadWriteError(err)
+		v.noWriteLock.Lock()
+		v.noWriteOrDelete = true
+		v.noWriteLock.Unlock()
+		return fmt.Errorf("sync volume %d tombstone: %w", v.Id, err)
+	}
+	return nil
 }
 
 // syncIndex flushes the .idx, the second half of a durable write: the row is
@@ -265,6 +289,8 @@ func (v *Volume) writeNeedle2(n *needle.Needle, checkCookie bool, fsync bool, is
 		return 0, 0, false, err
 	}
 
+	defer v.untrackPendingWrite(v.trackPendingWrite(n))
+
 	if n.Ttl == needle.EMPTY_TTL && v.Ttl != needle.EMPTY_TTL {
 		n.SetHasTtl()
 		n.Ttl = v.Ttl
@@ -291,7 +317,9 @@ func (v *Volume) doWriteRequest(n *needle.Needle, checkCookie bool, fsync bool) 
 	if err != nil || isUnchanged {
 		return
 	}
-	err = v.publishWriteRequest(n, offset, fsync)
+	if err = v.publishWriteRequest(n, offset, fsync); err == nil {
+		err = v.dropCancelledWrite(n, offset)
+	}
 	return
 }
 
@@ -307,22 +335,45 @@ func (v *Volume) appendWriteRequest(n *needle.Needle, checkCookie bool, fsync bo
 
 	// check whether existing needle cookie matches
 	nv, ok := v.nm.Get(n.Id)
-	if ok {
+	if ok && !nv.Offset.IsZero() {
 		existingNeedle, _, _, existingNeedleReadErr := needle.ReadNeedleHeader(v.DataBackend, v.Version(), nv.Offset.ToActualOffset())
 		if existingNeedleReadErr != nil {
 			err = fmt.Errorf("reading existing needle: %w", existingNeedleReadErr)
 			return
 		}
-		if n.Cookie == 0 && !checkCookie {
-			// this is from batch deletion, and read back again when tailing a remote volume
-			// which only happens when checkCookie == false and fsync == false
-			n.Cookie = existingNeedle.Cookie
+		if existingNeedle.Id != n.Id && existingNeedle.Size != nv.Size &&
+			OffsetSize == 4 && nv.Offset.ToActualOffset() < int64(MaxPossibleVolumeSize) {
+			// a 4-byte index entry can index past the 32 GiB wrap: the low
+			// offset may hold another needle while the real record sits at
+			// the wrapped offset, where reads already retry on a mismatch
+			wrapped, _, _, wrappedErr := needle.ReadNeedleHeader(v.DataBackend, v.Version(),
+				nv.Offset.ToActualOffset()+int64(MaxPossibleVolumeSize))
+			if wrappedErr == nil {
+				existingNeedle = wrapped
+			} else if wrappedErr != io.EOF {
+				err = fmt.Errorf("reading existing needle at wrapped offset: %w", wrappedErr)
+				return
+			}
 		}
-		if existingNeedle.Cookie != n.Cookie {
-			glog.V(0).Infof("write cookie mismatch: existing %s, new %s",
-				needle.NewFileIdFromNeedle(v.Id, existingNeedle), needle.NewFileIdFromNeedle(v.Id, n))
-			err = fmt.Errorf("mismatching cookie %x", n.Cookie)
-			return
+		if existingNeedle.Id != n.Id && existingNeedle.Size != nv.Size {
+			// the entry resolves to a record that is neither the indexed key
+			// nor the indexed size, so it is stale rather than a duplicate —
+			// skip the cookie check and let the publish step overwrite it
+			// once the append commits
+			glog.V(0).Infof("volume %d index entry for %s resolves to %s; overwriting stale index entry",
+				v.Id, needle.NewFileIdFromNeedle(v.Id, n), needle.NewFileIdFromNeedle(v.Id, existingNeedle))
+		} else {
+			if n.Cookie == 0 && !checkCookie {
+				// this is from batch deletion, and read back again when tailing a remote volume
+				// which only happens when checkCookie == false and fsync == false
+				n.Cookie = existingNeedle.Cookie
+			}
+			if existingNeedle.Cookie != n.Cookie {
+				glog.V(0).Infof("write cookie mismatch: existing %s, new %s",
+					needle.NewFileIdFromNeedle(v.Id, existingNeedle), needle.NewFileIdFromNeedle(v.Id, n))
+				err = fmt.Errorf("mismatching cookie %x", n.Cookie)
+				return
+			}
 		}
 	}
 
@@ -389,6 +440,8 @@ func (v *Volume) syncDelete(n *needle.Needle) (Size, error) {
 }
 
 func (v *Volume) deleteNeedle2(n *needle.Needle) (Size, error) {
+	v.CancelPendingWrites(n.Id, n.Cookie)
+
 	// todo: delete info is always appended no fsync, it may need fsync in future
 	fsync := false
 
@@ -572,6 +625,7 @@ func (v *Volume) processBatchRun(run []*needle.AsyncRequest) {
 	}
 
 	refused := false
+	tookBack := false
 	for i := 0; i < len(run); i++ {
 		if refused {
 			run[i].UpdateResult(0, 0, false, fmt.Errorf("volume %d is read only", v.Id))
@@ -582,6 +636,9 @@ func (v *Volume) processBatchRun(run []*needle.AsyncRequest) {
 				if perr := v.publishWriteRequest(run[i].N, stagedWriteOffsets[i], true); perr != nil {
 					run[i].UpdateResult(0, 0, false, perr)
 					refused = true
+				} else if derr := v.dropCancelledWrite(run[i].N, stagedWriteOffsets[i]); derr != nil {
+					run[i].UpdateResult(0, 0, false, derr)
+					tookBack = tookBack || errors.Is(derr, ErrorDeleted)
 				}
 			}
 		} else if stagedDeleteOk[i] {
@@ -595,7 +652,14 @@ func (v *Volume) processBatchRun(run []*needle.AsyncRequest) {
 	// rows cannot be rolled back, so a failed sync fails every request in the
 	// run instead of acknowledging an index entry that may not survive.
 	if needIndexSync {
-		if idxErr := v.syncIndex(); idxErr != nil {
+		var idxErr error
+		if tookBack {
+			idxErr = v.syncTakenBack(backend)
+		}
+		if idxErr == nil {
+			idxErr = v.syncIndex()
+		}
+		if idxErr != nil {
 			for i := 0; i < len(run); i++ {
 				run[i].UpdateResult(0, 0, false, idxErr)
 			}
@@ -700,6 +764,9 @@ func (v *Volume) WriteNeedleBlob(needleId NeedleId, needleBlob []byte, size Size
 	blobHeader.ParseNeedleHeader(needleBlob)
 	if blobHeader.Size != size {
 		return fmt.Errorf("needle %d size %d does not match its blob header size %d", needleId, size, blobHeader.Size)
+	}
+	if blobHeader.Id != needleId {
+		return fmt.Errorf("needle %d blob header holds needle %d", needleId, blobHeader.Id)
 	}
 	// The blob is appended as is: its length must be the record this size takes in this volume's version.
 	if actualSize := needle.GetActualSize(size, v.Version()); int64(len(needleBlob)) != actualSize {

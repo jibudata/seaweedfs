@@ -59,6 +59,8 @@ type Volume struct {
 	asyncRequestsChan chan *needle.AsyncRequest
 	asyncWorkerClosed bool
 
+	pendingWrites pendingWrites
+
 	lastModifiedTsSeconds uint64 // unix time in seconds
 	lastAppendAtNs        uint64 // unix time in nanoseconds
 
@@ -67,7 +69,8 @@ type Volume struct {
 	ldbTimeout             int64
 
 	isCompactionInProgress atomic.Bool
-	lastDiskCheckNs        atomic.Int64 // unix time in nanoseconds for phantom volume detection
+	loadGeneration         atomic.Uint64 // changes on every load, including a compaction commit
+	lastDiskCheckNs        atomic.Int64  // unix time in nanoseconds for phantom volume detection
 
 	volumeInfoRWLock sync.RWMutex
 	volumeInfo       *volume_server_pb.VolumeInfo
@@ -178,7 +181,7 @@ func (v *Volume) RelocateIndexTo(newIdxDir string) error {
 func (v *Volume) Version() needle.Version {
 	v.superBlockAccessLock.Lock()
 	defer v.superBlockAccessLock.Unlock()
-	if v.volumeInfo.Version != 0 {
+	if v.volumeInfo.Version != 0 && v.SuperBlock.Version != needle.Version(v.volumeInfo.Version) {
 		v.SuperBlock.Version = needle.Version(v.volumeInfo.Version)
 	}
 	return v.SuperBlock.Version
@@ -469,6 +472,7 @@ func (v *Volume) ToVolumeInformationMessage(into *master_pb.VolumeInformationMes
 	maxFileKey, volumeSize, modTime, fileCount, deletedCount, deletedSize, ok := v.collectStatus()
 
 	if !ok {
+		glog.Warningf("Volume %d: needle map or data file is closed - not reporting to master", v.Id)
 		return 0, nil
 	}
 

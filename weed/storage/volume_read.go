@@ -3,7 +3,11 @@ package storage
 import (
 	"fmt"
 	"io"
+	"sync/atomic"
 	"time"
+
+	lru "github.com/hashicorp/golang-lru/v2"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
@@ -11,11 +15,46 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 const PagedReadLimit = 1024 * 1024
+
+// A range carries no checksum of its own, so a ranged read checks the whole
+// needle's CRC the first time any range of it is read, recording the CRC of
+// each block on the way. verifiedNeedles keeps those block CRCs, and later
+// ranges check just the blocks they cover, so damage that appears after the
+// first check is still caught. Entries are per volume load, so a remounted
+// copy or a compaction is checked again, and concurrent first reads of a
+// needle share one check.
+var (
+	verifiedNeedles, _ = lru.New[verifiedNeedle, []needle.CRC](64 * 1024)
+	verifyingNeedles   singleflight.Group
+	volumeLoads        atomic.Uint64
+)
+
+const (
+	rangeCheckBlocks       = 64
+	minRangeCheckBlockSize = 64 * 1024
+)
+
+// rangeCheckBlockSize keeps a needle to 64 blocks, each 64 KiB to 1 MiB.
+func rangeCheckBlockSize(dataSize int64) int64 {
+	blockSize := int64(minRangeCheckBlockSize)
+	for blockSize < PagedReadLimit && dataSize > rangeCheckBlocks*blockSize {
+		blockSize *= 2
+	}
+	return blockSize
+}
+
+type verifiedNeedle struct {
+	loadGeneration uint64
+	id             NeedleId
+	appendAtNs     uint64
+	checksum       needle.CRC
+}
 
 // read fills in Needle content by looking up n.Id from NeedleMapper
 func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSizeFn func(size Size)) (count int, err error) {
@@ -51,18 +90,34 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 	if onReadSizeFn != nil {
 		onReadSizeFn(readSize)
 	}
-	if readOption != nil && readOption.AttemptMetaOnly && readSize > PagedReadLimit {
+	// A version 1 needle has no data size field and no metadata after its
+	// data, which ReadNeedleMeta relies on, so it is always read in full.
+	if readOption != nil && readOption.AttemptMetaOnly && v.Version() != needle.Version1 && (readOption.MustMetaOnly || readOption.HasRange || readSize > PagedReadLimit) {
 		readOption.VolumeRevision = v.SuperBlock.CompactionRevision
+		id := n.Id
 		err = n.ReadNeedleMeta(v.DataBackend, nv.Offset.ToActualOffset(), readSize, v.Version())
 		if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
 			readOption.IsOutOfRange = true
 			err = n.ReadNeedleMeta(v.DataBackend, nv.Offset.ToActualOffset()+int64(MaxPossibleVolumeSize), readSize, v.Version())
 		}
 		if err != nil {
+			v.checkReadWriteError(err)
 			return 0, err
+		}
+		if n.Id != id {
+			glog.V(0).Infof("volume %d index entry for needle %x resolves to needle %x; reporting not-found",
+				v.Id, uint64(id), uint64(n.Id))
+			return -1, ErrorNotFound
 		}
 		if !n.IsCompressed() && !n.IsChunkedManifest() {
 			readOption.IsMetaOnly = true
+			readOption.metaOffset = nv.Offset
+			// A must-meta-only read ends here, so its success may reset the
+			// streak. For a streamed GET the meta read precedes the payload read,
+			// which reports the outcome itself.
+			if readOption.MustMetaOnly {
+				v.checkReadWriteError(nil)
+			}
 		}
 	}
 	if readOption == nil || !readOption.IsMetaOnly {
@@ -89,6 +144,32 @@ func (v *Volume) readNeedle(n *needle.Needle, readOption *ReadOption, onReadSize
 	return -1, ErrorNotFound
 }
 
+// LookupNeedle returns the needle map size of id without reading its record,
+// so a needle past its TTL still counts as present.
+func (v *Volume) LookupNeedle(id NeedleId) (size Size, found bool, err error) {
+	v.dataFileAccessLock.RLock()
+	defer v.dataFileAccessLock.RUnlock()
+
+	if err := v.UnavailableError(); err != nil {
+		return 0, false, err
+	}
+	if v.nm == nil {
+		return 0, false, nil
+	}
+	nv, ok := v.nm.Get(id)
+	if !ok || nv.Offset.IsZero() {
+		return 0, false, nil
+	}
+	return nv.Size, true, nil
+}
+
+// NoteMetaOnlySuccess records a request that ended at the metadata read
+// (e.g. a HEAD or a cookie mismatch), so its success may reset the streak —
+// unlike a meta read that precedes a payload read.
+func (v *Volume) NoteMetaOnlySuccess() {
+	v.checkReadWriteError(nil)
+}
+
 // read needle at a specific offset
 func (v *Volume) readNeedleMetaAt(n *needle.Needle, offset int64, size int32) (err error) {
 	v.dataFileAccessLock.RLock()
@@ -112,9 +193,177 @@ func (v *Volume) readNeedleMetaAt(n *needle.Needle, offset int64, size int32) (e
 	return nil
 }
 
+// verifyMovedRecord checks that the record a compaction moved is the one n's
+// metadata came from, not a replacement of the same size, and sets
+// IsOutOfRange for where it now lies.
+func (v *Volume) verifyMovedRecord(n *needle.Needle, moved *needle_map.NeedleValue, found bool, readOption *ReadOption) error {
+	if !found || moved.Offset.IsZero() || moved.Size != n.Size {
+		return ErrorNotFound
+	}
+	m := new(needle.Needle)
+	readOption.IsOutOfRange = false
+	err := m.ReadNeedleMeta(v.DataBackend, moved.Offset.ToActualOffset(), moved.Size, v.Version())
+	if err == needle.ErrorSizeMismatch && OffsetSize == 4 {
+		readOption.IsOutOfRange = true
+		err = m.ReadNeedleMeta(v.DataBackend, moved.Offset.ToActualOffset()+int64(MaxPossibleVolumeSize), moved.Size, v.Version())
+	}
+	if err != nil {
+		v.checkReadWriteError(err)
+		return fmt.Errorf("ReadNeedleMeta of moved needle: %w", err)
+	}
+	// Compaction rewrites a pre-3.09 checksum in the current encoding.
+	if m.AppendAtNs != n.AppendAtNs || (m.Checksum != n.Checksum && uint32(n.Checksum) != m.Checksum.Value()) {
+		return ErrorNotFound
+	}
+	return nil
+}
+
 // read fills in Needle content by looking up n.Id from NeedleMapper
 func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, writer io.Writer, offset int64, size int64) (err error) {
+	dataSize := int64(n.DataSize)
+	if size <= 0 || (offset == 0 && size == dataSize) {
+		return v.streamNeedleData(n, readOption, writer, offset, size)
+	}
+	// Check the CRC before writing any byte of the range, so a damaged
+	// replica fails the read and the reader tries another copy.
+	crcs, err := v.verifiedNeedleBlocks(n, readOption)
+	if err != nil {
+		return err
+	}
+	blockSize := rangeCheckBlockSize(dataSize)
+	start := offset / blockSize * blockSize
+	end := (offset + size + blockSize - 1) / blockSize * blockSize
+	if end > dataSize {
+		end = dataSize
+	}
+	checker := &rangeBlockChecker{writer: writer, blockSize: blockSize, crcs: crcs, pos: start, from: offset, to: offset + size, end: end}
+	defer checker.free()
+	if err = v.streamNeedleData(n, readOption, checker, start, end-start); err != nil {
+		return err
+	}
+	if checker.pos != end {
+		return fmt.Errorf("ReadNeedleData: needle %v,%v ended at %d of %d", v.Id, n.Id, checker.pos, end)
+	}
+	return nil
+}
 
+func (v *Volume) verifiedNeedleBlocks(n *needle.Needle, readOption *ReadOption) ([]needle.CRC, error) {
+	key := verifiedNeedle{v.loadGeneration.Load(), n.Id, n.AppendAtNs, n.Checksum}
+	if crcs, ok := verifiedNeedles.Get(key); ok {
+		return crcs, nil
+	}
+	crcs, err, _ := verifyingNeedles.Do(fmt.Sprint(key), func() (any, error) {
+		dataSize := int64(n.DataSize)
+		blocks := &needleBlockCRCs{blockSize: rangeCheckBlockSize(dataSize)}
+		if err := v.streamNeedleData(n, readOption, blocks, 0, dataSize); err != nil {
+			return nil, err
+		}
+		if blocks.pos != dataSize {
+			return nil, fmt.Errorf("ReadNeedleData: needle %v,%v ended at %d of %d", v.Id, n.Id, blocks.pos, dataSize)
+		}
+		if blocks.pos%blocks.blockSize != 0 {
+			blocks.crcs = append(blocks.crcs, blocks.crc)
+		}
+		// A reload during the check may have swapped the data file.
+		if v.loadGeneration.Load() == key.loadGeneration {
+			verifiedNeedles.Add(key, blocks.crcs)
+		}
+		return blocks.crcs, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return crcs.([]needle.CRC), nil
+}
+
+// needleBlockCRCs records the CRC of each block the verification pass reads.
+type needleBlockCRCs struct {
+	blockSize int64
+	pos       int64
+	crc       needle.CRC
+	crcs      []needle.CRC
+}
+
+func (b *needleBlockCRCs) Write(p []byte) (int, error) {
+	written := len(p)
+	for len(p) > 0 {
+		k := len(p)
+		if left := b.blockSize - b.pos%b.blockSize; int64(k) > left {
+			k = int(left)
+		}
+		b.crc = b.crc.Update(p[:k])
+		b.pos += int64(k)
+		p = p[k:]
+		if b.pos%b.blockSize == 0 {
+			b.crcs = append(b.crcs, b.crc)
+			b.crc = 0
+		}
+	}
+	return written, nil
+}
+
+// rangeBlockChecker reads whole blocks around [from, to) and writes the bytes
+// of the range once their block matches the CRC the verification recorded.
+type rangeBlockChecker struct {
+	writer        io.Writer
+	blockSize     int64
+	crcs          []needle.CRC
+	pos, from, to int64
+	end           int64
+	crc           needle.CRC
+	held          []byte
+}
+
+func (c *rangeBlockChecker) Write(p []byte) (int, error) {
+	written := len(p)
+	for len(p) > 0 {
+		k := len(p)
+		if left := c.blockSize - c.pos%c.blockSize; int64(k) > left {
+			k = int(left)
+		}
+		if left := c.end - c.pos; int64(k) > left {
+			k = int(left)
+		}
+		if k <= 0 {
+			return 0, fmt.Errorf("ReadNeedleData: %d bytes past the range end %d", len(p), c.end)
+		}
+		c.crc = c.crc.Update(p[:k])
+		if lo, hi := max(c.pos, c.from), c.pos+int64(k); lo < c.to && hi > c.from {
+			if hi > c.to {
+				hi = c.to
+			}
+			if c.held == nil {
+				c.held = mem.Allocate(int(c.blockSize))[:0]
+			}
+			c.held = append(c.held, p[lo-c.pos:hi-c.pos]...)
+		}
+		c.pos += int64(k)
+		p = p[k:]
+		if c.pos%c.blockSize == 0 || c.pos == c.end {
+			block := (c.pos - 1) / c.blockSize
+			if block >= int64(len(c.crcs)) || c.crc != c.crcs[block] {
+				stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorCRC).Inc()
+				return 0, fmt.Errorf("checksum mismatch in block %d of the needle", block)
+			}
+			c.crc = 0
+			if len(c.held) > 0 {
+				if _, err := c.writer.Write(c.held); err != nil {
+					return 0, err
+				}
+				c.held = c.held[:0]
+			}
+		}
+	}
+	return written, nil
+}
+
+func (c *rangeBlockChecker) free() {
+	if c.held != nil {
+		mem.Free(c.held[:cap(c.held)])
+	}
+}
+
+func (v *Volume) streamNeedleData(n *needle.Needle, readOption *ReadOption, writer io.Writer, offset int64, size int64) (err error) {
 	if !readOption.HasSlowRead {
 		v.dataFileAccessLock.RLock()
 		defer v.dataFileAccessLock.RUnlock()
@@ -156,6 +405,11 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 	if readSize == 0 {
 		return nil
 	}
+	// Stream the record the metadata came from: the index may already point
+	// at a replacement, whose bytes must not go out under the old headers.
+	if !readOption.metaOffset.IsZero() {
+		nv = &needle_map.NeedleValue{Key: n.Id, Offset: readOption.metaOffset, Size: n.Size}
+	}
 
 	actualOffset := nv.Offset.ToActualOffset()
 	if readOption.IsOutOfRange {
@@ -173,6 +427,63 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 			mem.Free(spare)
 		}
 	}()
+
+	// The header is not part of the streamed body, so verify the indexed
+	// offset really holds this needle before sending another needle's data.
+	// A slow read dropped the access lock after the index lookup; take it
+	// back for the probe so a compaction commit cannot swap the backend
+	// under it, and resolve the offset the way the streaming loop does.
+	probeHeader := func() error {
+		if readOption.VolumeRevision != v.SuperBlock.CompactionRevision {
+			if v.nm == nil {
+				return ErrorNotFound
+			}
+			refreshed, found := v.nm.Get(n.Id)
+			if err := v.verifyMovedRecord(n, refreshed, found, readOption); err != nil {
+				return err
+			}
+			nv = refreshed
+			actualOffset = nv.Offset.ToActualOffset()
+			if readOption.IsOutOfRange {
+				actualOffset += int64(MaxPossibleVolumeSize)
+			}
+			readOption.VolumeRevision = v.SuperBlock.CompactionRevision
+			readOption.metaOffset = nv.Offset
+		}
+		header := make([]byte, NeedleHeaderSize)
+		headerCount, headerErr := v.DataBackend.ReadAt(header, actualOffset)
+		if headerErr == io.EOF && headerCount == NeedleHeaderSize {
+			headerErr = nil
+		}
+		if headerErr != nil {
+			if headerErr != io.EOF {
+				v.checkReadWriteError(headerErr)
+			}
+			return fmt.Errorf("ReadNeedleData header: %w", headerErr)
+		}
+		probe := new(needle.Needle)
+		probe.ParseNeedleHeader(header)
+		recordSize := nv.Size
+		if recordSize < 0 {
+			recordSize = -recordSize
+		}
+		if probe.Id != n.Id || probe.Size != recordSize {
+			glog.V(0).Infof("volume %d index entry for needle %x resolves to needle %x; reporting not-found",
+				v.Id, uint64(n.Id), uint64(probe.Id))
+			return ErrorNotFound
+		}
+		return nil
+	}
+	if readOption.HasSlowRead {
+		v.dataFileAccessLock.RLock()
+	}
+	probeErr := probeHeader()
+	if readOption.HasSlowRead {
+		v.dataFileAccessLock.RUnlock()
+	}
+	if probeErr != nil {
+		return probeErr
+	}
 
 	// read needle data
 	crc := needle.CRC(0)
@@ -198,14 +509,18 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 			}
 			// the volume is compacted
 			nv, ok = v.nm.Get(n.Id)
-			if !ok || nv.Offset.IsZero() {
+			if err := v.verifyMovedRecord(n, nv, ok, readOption); err != nil {
 				if readOption.HasSlowRead {
 					v.dataFileAccessLock.RUnlock()
 				}
-				return ErrorNotFound
+				return err
 			}
 			actualOffset = nv.Offset.ToActualOffset()
+			if readOption.IsOutOfRange {
+				actualOffset += int64(MaxPossibleVolumeSize)
+			}
 			readOption.VolumeRevision = v.SuperBlock.CompactionRevision
+			readOption.metaOffset = nv.Offset
 		}
 		count, err := n.ReadNeedleData(v.DataBackend, actualOffset, buf, x)
 		if readOption.HasSlowRead {
@@ -253,11 +568,6 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 			break
 		}
 	}
-	// Whole-needle read completed without a backend error — clear any
-	// pending EIO streak. If a non-EIO failure happens later (CRC etc.)
-	// we still return that error to the caller, but the disk itself
-	// produced clean bytes.
-	v.checkReadWriteError(nil)
 	if checkCRC && (n.Checksum != crc && uint32(n.Checksum) != crc.Value()) {
 		// the crc.Value() function is to be deprecated. this double checking is for backward compatibility
 		// with seaweed version using crc.Value() instead of uint32(crc), which appears in commit 056c480eb
@@ -265,6 +575,13 @@ func (v *Volume) readNeedleDataInto(n *needle.Needle, readOption *ReadOption, wr
 		// pending is the last page and is intentionally not written.
 		stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorCRC).Inc()
 		return fmt.Errorf("ReadNeedleData checksum %v expected %v for Needle: %v,%v", crc, n.Checksum, v.Id, n)
+	}
+	// The read succeeded only once the checksum passes; a failed needle
+	// leaves the io error streak untouched, matching the streamed path. A
+	// ranged read's verification pass leaves it alone too: the range read
+	// that follows reports the outcome.
+	if _, verifying := writer.(*needleBlockCRCs); !verifying {
+		v.checkReadWriteError(nil)
 	}
 	if pending != nil {
 		if _, err = writer.Write(pending); err != nil {

@@ -184,7 +184,7 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 
 	var count int
 	var memoryCost types.Size
-	readOption.AttemptMetaOnly, readOption.MustMetaOnly = shouldAttemptStreamWrite(hasVolume, ext, r)
+	readOption.AttemptMetaOnly, readOption.MustMetaOnly, readOption.HasRange = shouldAttemptStreamWrite(hasVolume, ext, r)
 	onReadSizeFn := func(size types.Size) {
 		memoryCost = size
 		atomic.AddInt64(&vs.inFlightDownloadDataSize, int64(memoryCost))
@@ -222,6 +222,12 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if n.Cookie != cookie {
+		// A meta-only read ended the request; record its success.
+		if readOption.IsMetaOnly {
+			if v := vs.store.GetVolume(volumeId); v != nil {
+				v.NoteMetaOnlySuccess()
+			}
+		}
 		glog.V(0).Infof("request %s with cookie:%x expected:%x from %s agent %s", r.URL.Path, cookie, n.Cookie, r.RemoteAddr, r.UserAgent())
 		NotFound(w)
 		return
@@ -231,6 +237,11 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		if r.Header.Get("If-Modified-Since") != "" {
 			if t, parseError := time.Parse(http.TimeFormat, r.Header.Get("If-Modified-Since")); parseError == nil {
 				if t.Unix() >= int64(n.LastModified) {
+					if readOption.IsMetaOnly {
+						if v := vs.store.GetVolume(volumeId); v != nil {
+							v.NoteMetaOnlySuccess()
+						}
+					}
 					w.WriteHeader(http.StatusNotModified)
 					return
 				}
@@ -238,6 +249,11 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	if inm := r.Header.Get("If-None-Match"); inm == "\""+n.Etag()+"\"" {
+		if readOption.IsMetaOnly {
+			if v := vs.store.GetVolume(volumeId); v != nil {
+				v.NoteMetaOnlySuccess()
+			}
+		}
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
@@ -281,7 +297,8 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 			}
 			// } else if strings.Contains(r.Header.Get("Accept-Encoding"), "zstd") && util.IsZstdContent(n.Data) {
 			//	w.Header().Set("Content-Encoding", "zstd")
-		} else if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") && util.IsGzippedContent(n.Data) {
+		} else if r.Header.Get("Range") == "" && strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") && util.IsGzippedContent(n.Data) {
+			// A range is over the decoded bytes, so only a whole read passes gzip through.
 			w.Header().Set("Content-Encoding", "gzip")
 		} else {
 			if n.Data, err = util.DecompressData(n.Data); err != nil {
@@ -301,22 +318,39 @@ func (vs *VolumeServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func shouldAttemptStreamWrite(hasLocalVolume bool, ext string, r *http.Request) (shouldAttempt bool, mustMetaOnly bool) {
+// shouldAttemptStreamWrite picks the ReadOption flags that let a GET or HEAD
+// skip the payload read: AttemptMetaOnly, MustMetaOnly and HasRange.
+func shouldAttemptStreamWrite(hasLocalVolume bool, ext string, r *http.Request) (shouldAttempt bool, mustMetaOnly bool, hasRange bool) {
 	if !hasLocalVolume {
-		return false, false
+		return false, false, false
 	}
 	if len(ext) > 0 {
 		ext = strings.ToLower(ext)
 	}
-	if r.Method == http.MethodHead {
-		return true, true
-	}
 	_, _, _, shouldResize := shouldResizeImages(ext, r)
 	_, _, _, _, shouldCrop := shouldCropImages(ext, r)
 	if shouldResize || shouldCrop {
-		return false, false
+		// A transformed image's length is not the needle's; the payload is
+		// needed to answer — also true for HEAD, which reports it.
+		return false, false, false
 	}
-	return true, false
+	if r.Method == http.MethodHead {
+		// Attempt only, so a needle up to PagedReadLimit is still read whole:
+		// on a spinning disk one read is cheaper than a header read followed
+		// by a trailer read.
+		return true, false, false
+	}
+	if ext == "" {
+		// The stored name may still make this an image to resize or crop,
+		// which needs the payload.
+		_, _, _, resizeIfImage := shouldResizeImages(".jpg", r)
+		_, _, _, _, cropIfImage := shouldCropImages(".jpg", r)
+		if resizeIfImage || cropIfImage {
+			return true, false, false
+		}
+	}
+	// A range streams only its bytes, so a small needle is not read whole.
+	return true, false, r.Header.Get("Range") != ""
 }
 
 func (vs *VolumeServer) tryHandleChunkedFile(n *needle.Needle, fileName string, ext string, w http.ResponseWriter, r *http.Request) (processed bool) {
@@ -464,6 +498,10 @@ func (vs *VolumeServer) streamWriteResponseContent(filename string, mimeType str
 	AdjustPassthroughHeaders(w, r, filename)
 
 	if r.Method == http.MethodHead {
+		// HEAD ends at the metadata read; record its success.
+		if v := vs.store.GetVolume(volumeId); v != nil {
+			v.NoteMetaOnlySuccess()
+		}
 		w.Header().Set("Content-Length", strconv.FormatInt(totalSize, 10))
 		return
 	}
