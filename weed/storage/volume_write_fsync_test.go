@@ -446,23 +446,26 @@ func TestBatchFsyncRollbackRestoresOriginalValueAfterRepeatedNeedleId(t *testing
 	}
 	v.processBatch(requests)
 
-	for _, request := range requests {
-		_, _, _, err = request.WaitComplete()
-		require.Error(t, err)
-	}
+	// A repeated needle id starts a new batch run, so the second write syncs
+	// on its own: the first run rolls back to "original-value" and the second
+	// write lands as a normal sequential overwrite.
+	_, _, _, err = requests[0].WaitComplete()
+	require.Error(t, err)
+	_, _, _, err = requests[1].WaitComplete()
+	require.NoError(t, err)
 
 	readBack := new(needle.Needle)
 	readBack.Id = kept.Id
 	_, err = v.readNeedle(readBack, nil, nil)
 	require.NoError(t, err)
-	require.Equal(t, []byte("original-value"), readBack.Data)
+	require.Equal(t, []byte("second-failed-value"), readBack.Data)
 
 	reloaded := reopenCountingVolume(t, v)
 	readBack = new(needle.Needle)
 	readBack.Id = kept.Id
 	_, err = reloaded.readNeedle(readBack, nil, nil)
 	require.NoError(t, err)
-	require.Equal(t, []byte("original-value"), readBack.Data)
+	require.Equal(t, []byte("second-failed-value"), readBack.Data)
 }
 
 // Rolling back a first-time write must not leave a tombstoned map entry: the
@@ -512,6 +515,61 @@ func TestFailedBatchMarksEveryRequestFailed(t *testing.T) {
 		_, _, _, err = request.WaitComplete()
 		require.ErrorContains(t, err, "batch fsync failed")
 	}
+}
+
+// failingPutMapper fails the failAt-th Put.
+type failingPutMapper struct {
+	NeedleMapper
+	puts   int
+	failAt int
+	err    error
+}
+
+func (m *failingPutMapper) Put(key types.NeedleId, offset types.Offset, size types.Size) error {
+	m.puts++
+	if m.puts == m.failAt {
+		return m.err
+	}
+	return m.NeedleMapper.Put(key, offset, size)
+}
+
+// A durable write whose index update fails stops the volume taking writes:
+// the requests after it in the same batch are refused, as a write sent on
+// its own would be, instead of indexed behind it. Entries before it stay
+// acked.
+func TestProcessBatchRefusesWritesAfterDurableIndexFailure(t *testing.T) {
+	v, _ := newCountingVolume(t)
+
+	kept := fixedNeedle(4, "kept")
+	_, _, _, err := v.writeNeedle2(kept, true, true, true)
+	require.NoError(t, err)
+
+	v.nm = &failingPutMapper{
+		NeedleMapper: v.nm,
+		failAt:       2,
+		err:          errors.New("index write failed"),
+	}
+
+	wrongCookie := fixedNeedle(4, "kept")
+	wrongCookie.Cookie = kept.Cookie + 1
+	requests := []*needle.AsyncRequest{
+		needle.NewAsyncRequest(fixedNeedle(1, "before"), true),
+		needle.NewAsyncRequest(fixedNeedle(2, "torn"), true),
+		needle.NewAsyncRequest(fixedNeedle(3, "after"), true),
+		needle.NewAsyncRequest(fixedNeedle(4, "kept"), true),
+		needle.NewAsyncRequest(wrongCookie, true),
+	}
+	v.processBatch(requests)
+
+	_, _, _, err = requests[0].WaitComplete()
+	require.NoError(t, err)
+	_, _, _, err = requests[1].WaitComplete()
+	require.Error(t, err)
+	for _, request := range requests[2:] {
+		_, _, _, err = request.WaitComplete()
+		require.ErrorContains(t, err, "read only", "refused as it would be sent on its own")
+	}
+	require.True(t, v.IsReadOnly())
 }
 
 // The quarantine is what CollectHeartbeat keys on: an unavailable volume must

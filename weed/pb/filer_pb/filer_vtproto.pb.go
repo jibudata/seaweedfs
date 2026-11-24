@@ -4945,9 +4945,9 @@ func (m *FilerConf_PathConf) MarshalToSizedBufferVT(dAtA []byte) (int, error) {
 		i--
 		dAtA[i] = 0x38
 	}
-	if m.Fsync {
+	if m.Fsync != nil {
 		i--
-		if m.Fsync {
+		if *m.Fsync {
 			dAtA[i] = 1
 		} else {
 			dAtA[i] = 0
@@ -8445,7 +8445,7 @@ func (m *FilerConf_PathConf) SizeVT() (n int) {
 	if l > 0 {
 		n += 1 + l + protohelpers.SizeOfVarint(uint64(l))
 	}
-	if m.Fsync {
+	if m.Fsync != nil {
 		n += 2
 	}
 	if m.VolumeGrowthCount != 0 {
@@ -22084,7 +22084,8 @@ func (m *FilerConf_PathConf) UnmarshalVT(dAtA []byte) error {
 					break
 				}
 			}
-			m.Fsync = bool(v != 0)
+			b := bool(v != 0)
+			m.Fsync = &b
 		case 7:
 			if wireType != 0 {
 				return fmt.Errorf("proto: wrong wireType = %d for field VolumeGrowthCount", wireType)
