@@ -59,7 +59,7 @@ func testCommitAfterCompactByVolumeData(t *testing.T, kind NeedleMapKind, change
 		}
 		want[6] = n.Data
 	case "delete":
-		if _, err := v.deleteNeedle2(newEmptyNeedle(3)); err != nil {
+		if _, err := v.deleteNeedle2(newEmptyNeedle(3), false); err != nil {
 			t.Fatalf("delete 3: %v", err)
 		}
 		delete(want, 3)

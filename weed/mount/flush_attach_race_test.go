@@ -35,7 +35,7 @@ func (p *attachOnAssignPeer) AssignVolume(context.Context, *filer_pb.AssignVolum
 // flush is between taking its chunk snapshot and installing the compacted
 // list. The chunk must stay on the handle and reach the filer.
 func TestFlushKeepsChunkAttachedDuringCommit(t *testing.T) {
-	base := attributeAppendEntry(filer.ManifestBatch)
+	base := attributeAppendEntry(filer.SmallChunkManifestBatch)
 	base.CommitTsNs = 100
 	peer := &g6ConditionalPeer{entry: proto.Clone(base).(*filer_pb.Entry)}
 	w, handle := g6AppendHandle(t, peer, base, 1000)
@@ -47,7 +47,7 @@ func TestFlushKeepsChunkAttachedDuringCommit(t *testing.T) {
 		fh.entryChunkGroup.AddChunk(late)
 	}})
 
-	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, Offset: uint64(filer.ManifestBatch) * 256, Size: 256}, bytes.Repeat([]byte{'W'}, 256)); n != 256 || code != fuse.OK {
+	if n, code := w.Write(nil, &fuse.WriteIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle, Offset: uint64(filer.SmallChunkManifestBatch) * 256, Size: 256}, bytes.Repeat([]byte{'W'}, 256)); n != 256 || code != fuse.OK {
 		t.Fatalf("write: %d %v", n, code)
 	}
 	if code := w.Flush(nil, &fuse.FlushIn{InHeader: fuse.InHeader{NodeId: 42}, Fh: handle}); code != fuse.OK {

@@ -24,6 +24,33 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
+type lookupOnlyMaster struct {
+	master_pb.UnimplementedSeaweedServer
+	volumeUrl string
+}
+
+func (m *lookupOnlyMaster) KeepConnected(stream master_pb.Seaweed_KeepConnectedServer) error {
+	if _, err := stream.Recv(); err != nil {
+		return err
+	}
+	if err := stream.Send(&master_pb.KeepConnectedResponse{}); err != nil {
+		return err
+	}
+	<-stream.Context().Done()
+	return nil
+}
+
+func (m *lookupOnlyMaster) LookupVolume(ctx context.Context, req *master_pb.LookupVolumeRequest) (*master_pb.LookupVolumeResponse, error) {
+	resp := &master_pb.LookupVolumeResponse{}
+	for _, id := range req.VolumeOrFileIds {
+		resp.VolumeIdLocations = append(resp.VolumeIdLocations, &master_pb.LookupVolumeResponse_VolumeIdLocation{
+			VolumeOrFileId: id,
+			Locations:      []*master_pb.Location{{Url: m.volumeUrl, PublicUrl: m.volumeUrl}},
+		})
+	}
+	return resp, nil
+}
+
 // flakyLookupMaster answers LookupVolume with the volume server only while
 // available is set, as a master does while a volume server is away.
 type flakyLookupMaster struct {

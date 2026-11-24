@@ -195,7 +195,7 @@ func lookupWhilePublishing(t *testing.T, wfs *WFS, fake *publishRaceFiler, out *
 	arrived, release := fake.hold(t, name)
 	done := make(chan fuse.Status, 1)
 	go func() {
-		_, _, st := wfs.lookupEntry(context.Background(), path)
+		_, _, st := wfs.lookupEntry(path)
 		done <- st
 	}()
 	select {
@@ -279,7 +279,7 @@ func TestLookupReportsFileRemovedAfterPublishWhileHandleDirty(t *testing.T) {
 	arrived, release := fake.hold(t, ".tmpDirty")
 	done := make(chan fuse.Status, 1)
 	go func() {
-		_, _, st := wfs.lookupEntry(context.Background(), path)
+		_, _, st := wfs.lookupEntry(path)
 		done <- st
 	}()
 	waitClosed(t, arrived, "lookup never reached the filer")
@@ -321,7 +321,7 @@ func TestLookupNotFoundForCleanHandleAsksOnce(t *testing.T) {
 	fake.remove(path) // a peer deleted it
 	before := fake.lookupCount(path)
 
-	if _, _, st := wfs.lookupEntry(context.Background(), path); st != fuse.ENOENT {
+	if _, _, st := wfs.lookupEntry(path); st != fuse.ENOENT {
 		t.Fatalf("lookupEntry = %v, want ENOENT", st)
 	}
 	if got := fake.lookupCount(path) - before; got != 1 {
@@ -337,7 +337,7 @@ func TestLookupNotFoundForDirtyHandleUsesLocalEntry(t *testing.T) {
 	path := dir.Child("local-only")
 	before := fake.lookupCount(path)
 
-	entry, _, st := wfs.lookupEntry(context.Background(), path)
+	entry, _, st := wfs.lookupEntry(path)
 	if st != fuse.OK || entry == nil {
 		t.Fatalf("lookupEntry = %v, want the deferred entry", st)
 	}
@@ -362,7 +362,7 @@ func TestLookupAnswersFromHandleWhilePublishInFlight(t *testing.T) {
 	createArrived, createRelease := fake.holdCreate(t, ".tmpSlow")
 	done := make(chan fuse.Status, 1)
 	go func() {
-		_, _, st := wfs.lookupEntry(context.Background(), path)
+		_, _, st := wfs.lookupEntry(path)
 		done <- st
 	}()
 	waitClosed(t, lookupArrived, "lookup never reached the filer")
@@ -418,7 +418,7 @@ func TestLookupPlaceholderSkipsCachedEntryOfAnotherFile(t *testing.T) {
 		t.Fatalf("cache another file at the path: %v", err)
 	}
 
-	entry, _, st := wfs.lookupEntry(context.Background(), path)
+	entry, _, st := wfs.lookupEntry(path)
 	if st != fuse.OK || entry == nil {
 		t.Fatalf("lookupEntry = %v, want the placeholder", st)
 	}
@@ -468,7 +468,7 @@ func TestLookupSnapshotsPlaceholderWhileWritten(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < rounds; i++ {
-			entry, _, st := wfs.lookupEntry(context.Background(), path)
+			entry, _, st := wfs.lookupEntry(path)
 			if st != fuse.OK || entry == nil || entry.Attr.Inode != out.NodeId {
 				t.Errorf("lookupEntry = %v, want the placeholder", st)
 				return
@@ -499,7 +499,7 @@ func TestLookupPlaceholderKeepsLocalOwnerUnderIdMap(t *testing.T) {
 		t.Fatalf("cached placeholder owner = %d:%d, want the caller's local 123:456", cached.Attr.Uid, cached.Attr.Gid)
 	}
 
-	entry, _, st := wfs.lookupEntry(context.Background(), dir.Child("mapped"))
+	entry, _, st := wfs.lookupEntry(dir.Child("mapped"))
 	if st != fuse.OK || entry == nil {
 		t.Fatalf("lookupEntry = %v, want the placeholder", st)
 	}
@@ -510,7 +510,7 @@ func TestLookupPlaceholderKeepsLocalOwnerUnderIdMap(t *testing.T) {
 	if err := wfs.metaCache.DeleteEntry(context.Background(), dir.Child("mapped")); err != nil {
 		t.Fatalf("evict the cached copy: %v", err)
 	}
-	entry, _, st = wfs.lookupEntry(context.Background(), dir.Child("mapped"))
+	entry, _, st = wfs.lookupEntry(dir.Child("mapped"))
 	if st != fuse.OK || entry == nil || entry.Attr.Inode != out.NodeId {
 		t.Fatalf("lookupEntry after eviction = %v, want the placeholder's handle snapshot", st)
 	}

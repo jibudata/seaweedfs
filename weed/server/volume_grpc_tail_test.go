@@ -28,7 +28,7 @@ func TestWriteTailedNeedleSizeZeroRecords(t *testing.T) {
 			t.Fatalf("write %d: %v", n.Id, err)
 		}
 	}
-	if _, err := store.DeleteVolumeNeedle(1, &needle.Needle{Id: deleted}); err != nil {
+	if _, err := store.DeleteVolumeNeedle(1, &needle.Needle{Id: deleted}, false); err != nil {
 		t.Fatalf("delete %d: %v", deleted, err)
 	}
 	v := store.GetVolume(1)

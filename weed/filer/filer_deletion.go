@@ -459,6 +459,20 @@ func (f *Filer) loopProcessingDeletion() {
 	}
 }
 
+func (f *Filer) FlushFileIdDeletionQueue(ctx context.Context, lookupFunc func([]string) (map[string]*operation.LookupResult, error)) (consumed []string) {
+	f.FileIdDeletionQueue.Consume(func(fileIds []string) {
+		consumed = fileIds
+		for i := 0; i < len(fileIds); i += DeletionBatchSize {
+			end := i + DeletionBatchSize
+			if end > len(fileIds) {
+				end = len(fileIds)
+			}
+			f.processDeletionBatch(fileIds[i:end], lookupFunc)
+		}
+	})
+	return consumed
+}
+
 // processDeletionBatch handles deletion of a batch of file IDs and processes results.
 // It classifies errors into retryable and permanent categories, adds retryable failures
 // to the retry queue, and logs appropriate messages.

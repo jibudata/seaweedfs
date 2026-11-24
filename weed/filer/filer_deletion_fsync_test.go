@@ -320,7 +320,7 @@ func TestRecursiveDeleteFsyncFollowsChildPaths(t *testing.T) {
 	}
 
 	for _, dir := range []string{"/data", "/mix", "/keep"} {
-		if err := f.DeleteEntryMetaAndData(ctx, util.FullPath(dir), true, false, true, false, nil, time.Time{}); err != nil {
+		if err := f.DeleteEntryMetaAndData(ctx, util.FullPath(dir), true, false, true, false, nil, 0); err != nil {
 			t.Fatal(err)
 		}
 	}
