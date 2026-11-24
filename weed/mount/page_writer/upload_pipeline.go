@@ -84,6 +84,21 @@ func NewUploadPipeline(writers *util.LimitedConcurrentExecutor, chunkSize int64,
 }
 
 func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsNs int64) (n int, err error) {
+	for len(p) > 0 {
+		chunkEnd := (off/up.ChunkSize + 1) * up.ChunkSize
+		writeSize := min(int64(len(p)), chunkEnd-off)
+		written, writeErr := up.saveDataToOneChunk(p[:writeSize], off, isSequential, tsNs)
+		n += written
+		if writeErr != nil {
+			return n, writeErr
+		}
+		off += int64(written)
+		p = p[written:]
+	}
+	return n, nil
+}
+
+func (up *UploadPipeline) saveDataToOneChunk(p []byte, off int64, isSequential bool, tsNs int64) (n int, err error) {
 
 	up.chunksLock.Lock()
 	defer up.chunksLock.Unlock()
@@ -173,6 +188,17 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 }
 
 func (up *UploadPipeline) MaybeReadDataAt(p []byte, off int64, tsNs int64) (maxStop int64) {
+	for len(p) > 0 {
+		chunkEnd := (off/up.ChunkSize + 1) * up.ChunkSize
+		readSize := min(int64(len(p)), chunkEnd-off)
+		maxStop = max(maxStop, up.maybeReadDataFromOneChunk(p[:readSize], off, tsNs))
+		off += readSize
+		p = p[readSize:]
+	}
+	return maxStop
+}
+
+func (up *UploadPipeline) maybeReadDataFromOneChunk(p []byte, off int64, tsNs int64) (maxStop int64) {
 	logicChunkIndex := LogicChunkIndex(off / up.ChunkSize)
 
 	up.chunksLock.Lock()

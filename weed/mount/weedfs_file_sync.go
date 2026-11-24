@@ -380,11 +380,12 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 		// not good, but should be ok
 		glog.V(0).Infof("MaybeManifestize: %v", manifestErr)
 	}
-	if rewrote {
-		fh.installRewrittenChunks(snapshot, append(chunks, manifestChunks...))
+	combined := append(chunks, manifestChunks...)
+	if rewrote || chunksDiffer(snapshot, combined) {
+		fh.installRewrittenChunks(snapshot, combined)
 	} else {
 		fh.UpdateEntry(func(e *filer_pb.Entry) {
-			e.Chunks = withChunksAttachedSince(snapshot, append(chunks, manifestChunks...), e.Chunks)
+			e.Chunks = withChunksAttachedSince(snapshot, combined, e.Chunks)
 		})
 	}
 
@@ -713,6 +714,40 @@ func contentFileIdKey(c *filer_pb.FileChunk) string {
 		}
 	}
 	return fmt.Sprintf("%d,%x,%x", fid.VolumeId, fid.FileKey, fid.Cookie)
+}
+
+// chunksDiffer reports whether two chunk slices refer to different chunk sets
+// (by file id), ignoring pure reordering such as manifest chunks moved to the
+// end by SeparateManifestChunks.
+func chunksDiffer(a, b []*filer_pb.FileChunk) bool {
+	if len(a) != len(b) {
+		return true
+	}
+	if len(a) == 0 {
+		return false
+	}
+	sameOrder := true
+	for i := range a {
+		if contentFileIdKey(a[i]) != contentFileIdKey(b[i]) {
+			sameOrder = false
+			break
+		}
+	}
+	if sameOrder {
+		return false
+	}
+	counts := make(map[string]int, len(a))
+	for _, c := range a {
+		counts[contentFileIdKey(c)]++
+	}
+	for _, c := range b {
+		k := contentFileIdKey(c)
+		if counts[k] == 0 {
+			return true
+		}
+		counts[k]--
+	}
+	return false
 }
 
 // ackedBase is the base an acknowledged create leaves: the entry the filer

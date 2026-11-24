@@ -118,9 +118,15 @@ func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n in
 	// println(sc.logicChunkIndex, "|", tsNs, "write at", offset, len(src), sc.actualChunkIndex)
 
 	innerOffset := offset % sc.swapfile.chunkSize
+	remaining := sc.swapfile.chunkSize - innerOffset
+	if int64(len(src)) > remaining {
+		src = src[:remaining]
+	}
 	var err error
 	n, err = sc.swapfile.file.WriteAt(src, int64(sc.actualChunkIndex)*sc.swapfile.chunkSize+innerOffset)
-	sc.usage.MarkWritten(innerOffset, innerOffset+int64(n), tsNs)
+	if n > 0 {
+		sc.usage.MarkWritten(innerOffset, innerOffset+int64(n), tsNs)
+	}
 	if err != nil {
 		glog.Errorf("failed to write swap file %s: %v", sc.swapfile.file.Name(), err)
 	}

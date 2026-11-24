@@ -68,7 +68,7 @@ func (pw *PageWriter) ReadDirtyDataAt(data []byte, offset int64, tsNs int64) (ma
 	for i := chunkIndex; len(data) > 0; i++ {
 		readSize := min(int64(len(data)), (i+1)*pw.chunkSize-offset)
 
-		maxStop = pw.randomWriter.ReadDirtyDataAt(data[:readSize], offset, tsNs)
+		maxStop = max(maxStop, pw.randomWriter.ReadDirtyDataAt(data[:readSize], offset, tsNs))
 
 		offset += readSize
 		data = data[readSize:]
