@@ -5,9 +5,11 @@ import (
 	"io"
 	"sync"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/page_writer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type ChunkedDirtyPages struct {
@@ -17,8 +19,9 @@ type ChunkedDirtyPages struct {
 	lastErr        error
 	collection     string
 	replication    string
-	uploadPipeline *page_writer.UploadPipeline
-	hasWrites      bool
+	uploadPipeline  *page_writer.UploadPipeline
+	hasWrites       bool
+	saveDataAsChunk func(util.FullPath) filer.SaveDataAsChunkFunctionType
 }
 
 var (
@@ -28,7 +31,8 @@ var (
 func newMemoryChunkPages(fh *FileHandle, chunkSize int64) *ChunkedDirtyPages {
 
 	dirtyPages := &ChunkedDirtyPages{
-		fh: fh,
+		fh:              fh,
+		saveDataAsChunk: fh.wfs.saveDataAsChunk,
 	}
 
 	swapFileDir := fh.wfs.option.getUniqueCacheDirForWrite()
@@ -40,23 +44,25 @@ func newMemoryChunkPages(fh *FileHandle, chunkSize int64) *ChunkedDirtyPages {
 	return dirtyPages
 }
 
-func (pages *ChunkedDirtyPages) AddPage(offset int64, data []byte, isSequential bool, tsNs int64) error {
+func (pages *ChunkedDirtyPages) AddPage(offset int64, data []byte, isSequential bool, tsNs int64) (n int, err error) {
 	// A failed chunk upload already dropped its data, so this handle can never
 	// flush cleanly. Reject further writes so the writer fails fast instead of
 	// pushing the rest of the file through a pipeline that cannot persist it.
 	if err := pages.LastError(); err != nil {
-		return err
+		return 0, err
 	}
 	pages.hasWrites = true
 
 	glog.V(4).Infof("%v memory AddPage [%d, %d)", pages.fh.fh, offset, offset+int64(len(data)))
-	_, err := pages.uploadPipeline.SaveDataAt(data, offset, isSequential, tsNs)
-
-	return err
+	return pages.uploadPipeline.SaveDataAt(data, offset, isSequential, tsNs)
 }
 
 func (pages *ChunkedDirtyPages) HasWrites() bool {
 	return pages.hasWrites
+}
+
+func (pages *ChunkedDirtyPages) HasPendingUploads() bool {
+	return pages.hasWrites && pages.uploadPipeline.HasPendingUploads()
 }
 
 func (pages *ChunkedDirtyPages) FlushData() error {
@@ -99,7 +105,7 @@ func (pages *ChunkedDirtyPages) saveChunkedFileIntervalToStorage(reader io.Reade
 
 	fileFullPath := pages.fh.FullPath()
 	fileName := fileFullPath.Name()
-	chunk, err := pages.fh.wfs.saveDataAsChunk(fileFullPath)(reader, fileName, offset, modifiedTsNs, uint64(size))
+	chunk, err := pages.saveDataAsChunk(fileFullPath)(reader, fileName, offset, modifiedTsNs, uint64(size))
 	if err != nil {
 		glog.V(0).Infof("%v saveToStorage [%d,%d): %v", fileFullPath, offset, offset+size, err)
 		pages.setLastError(err)

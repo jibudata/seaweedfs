@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"context"
 	"fmt"
 	"syscall"
 
@@ -8,9 +9,15 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle *FileHandle, status fuse.Status) {
+	fileHandle, _, status = wfs.AcquireOpenHandle(inode, flags, uid, gid)
+	return fileHandle, status
+}
+
+func (wfs *WFS) AcquireOpenHandle(inode uint64, flags, uid, gid uint32) (fileHandle *FileHandle, openFh FileHandleId, status fuse.Status) {
 	// If there is an in-flight async flush for this inode, wait for it to
 	// complete before reopening.  Otherwise the new handle would be built
 	// from pre-close filer metadata and its next flush could overwrite the
@@ -19,7 +26,7 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 
 	path, pathStatus := wfs.inodeToPath.GetPath(inode)
 	if pathStatus != fuse.OK {
-		return nil, wfs.pathlessInodeStatus(inode, pathStatus)
+		return nil, 0, wfs.pathlessInodeStatus(inode, pathStatus)
 	}
 
 	// A fresh lookup returns the entry with the filer log position it
@@ -40,12 +47,12 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 	} else {
 		entry, entryVersionTsNs, status = wfs.maybeLoadEntry(path)
 		if status != fuse.OK {
-			return nil, status
+			return nil, 0, status
 		}
 		freshLookup = true
 	}
 	if wormEnforced, _ := wfs.wormEnforcedForEntry(path, entry); wormEnforced && flags&fuse.O_ANYWRITE != 0 {
-		return nil, fuse.EPERM
+		return nil, 0, fuse.EPERM
 	}
 	// Check unix permission bits for the requested access mode. With
 	// default_permissions the kernel already enforced them before this
@@ -56,12 +63,12 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 			fileUid, fileGid = wfs.option.UidGidMapper.FilerToLocal(fileUid, fileGid)
 		}
 		if mask := openFlagsToAccessMask(flags); mask != 0 && !hasAccess(uid, gid, fileUid, fileGid, entry.Attributes.FileMode, mask) {
-			return nil, fuse.EACCES
+			return nil, 0, fuse.EACCES
 		}
 	}
-	// need to AcquireFileHandle again to ensure correct handle counter
+	// need to AcquireOpenFileHandle again to ensure correct handle counter and per-open handle id
 	var existed bool
-	fileHandle, existed = wfs.fhMap.AcquireFileHandle(wfs, inode, entry, entryVersionTsNs.tsNs, entryVersionTsNs.signature)
+	fileHandle, openFh, existed = wfs.fhMap.AcquireOpenFileHandle(wfs, inode, entry, entryVersionTsNs.tsNs, entryVersionTsNs.signature, flags&syscall.O_APPEND != 0)
 	fileHandle.RememberPath(path)
 	if existed && freshLookup {
 		// Another opener created the handle while our lookup was in flight;
@@ -81,12 +88,57 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 		if fileHandle.dlmLock == nil {
 			// No lock server is reachable: proceeding would silently drop
 			// cross-mount write serialization, so fail the open instead.
-			wfs.fhMap.ReleaseByHandle(fileHandle.fh)
-			return nil, fuse.Status(syscall.EAGAIN)
+			wfs.fhMap.ReleaseByHandle(openFh)
+			return nil, 0, fuse.Status(syscall.EAGAIN)
 		}
 		glog.V(1).Infof("DLM lock acquired for %s", path)
+		// The previous holder's flush may not have reached the local cache,
+		// and the lock orders this writer after it: take the filer's entry.
+		if entry, version, err := wfs.lookupFilerEntry(context.Background(), path); err == nil {
+			fileHandle.installAckedEntry(entry, version.tsNs, version.signature)
+		}
 	}
-	return fileHandle, fuse.OK
+	return fileHandle, openFh, fuse.OK
+}
+
+// lookupFilerEntry reads path from the filer, bypassing the local cache, in
+// local ids and with the log position the answer reflects.
+func (wfs *WFS) lookupFilerEntry(ctx context.Context, path util.FullPath) (*filer_pb.Entry, entryVersion, error) {
+	entry, version, err := wfs.lookupOwnerEntry(ctx, path)
+	if err != nil {
+		return nil, entryVersion{}, err
+	}
+	if entry.Attributes == nil {
+		entry.Attributes = &filer_pb.FuseAttributes{}
+	}
+	wfs.mapPbIdFromFilerToLocal(entry)
+	return entry, version, nil
+}
+
+// lookupOwnerEntry reads path in filer ids from the filer that checks path's
+// write conditions, since another filer may lag it.
+func (wfs *WFS) lookupOwnerEntry(ctx context.Context, path util.FullPath) (*filer_pb.Entry, entryVersion, error) {
+	dir, name := path.DirAndName()
+	var entry *filer_pb.Entry
+	var version entryVersion
+	lookup := func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+		resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{Directory: dir, Name: name})
+		if err != nil {
+			return err
+		}
+		entry, version = resp.Entry, entryVersion{tsNs: resp.LogTsNs, signature: resp.LogSignature}
+		return nil
+	}
+	var err error
+	if owner := wfs.entryWriteOwner(path); owner != "" {
+		err = wfs.callFiler(ctx, false, wfs.filerRPCWait(), owner.ToGrpcAddress(), lookup)
+	} else {
+		err = wfs.withFilerClient(ctx, false, wfs.filerRPCWait(), lookup)
+	}
+	if err != nil {
+		return nil, entryVersion{}, err
+	}
+	return entry, version, nil
 }
 
 // ReleaseHandle is called from FUSE Release.  For handles with a pending

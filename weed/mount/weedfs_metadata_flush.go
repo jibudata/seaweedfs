@@ -89,19 +89,21 @@ func (wfs *WFS) flushAllDirtyMetadata() {
 //
 // When -dlm is enabled, the distributed lock is already held by the FileHandle
 // from open-for-write through close, so no additional distributed lock is
-// needed here. The local fhLockTable lock below serializes within this mount.
+// needed here. The local locks below serialize within this mount: like a
+// close, the publication waits for a rename of the file in flight and then
+// writes the name the rename left.
 func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
-	// Acquire exclusive lock on the file handle
-	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("flushMetadata", fh.fh, util.ExclusiveLock)
-	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+	dir, name := fh.FullPath().DirAndName()
+	fileFullPath, dir, name, release, err := wfs.lockFlushTarget(fh, "flushMetadata", dir, name)
+	if err != nil {
+		return err
+	}
+	defer release()
 
 	// Double-check dirty flag under lock
 	if !fh.dirtyMetadata {
 		return nil
 	}
-
-	fileFullPath := fh.FullPath()
-	dir, name := fileFullPath.DirAndName()
 
 	glog.V(4).Infof("flushFileMetadata %s fh %d", fileFullPath, fh.fh)
 
@@ -179,9 +181,13 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 	baseSnapshot := proto.Clone(requestEntry).(*filer_pb.Entry)
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-	resp, err := wfs.streamCreateEntry(context.Background(), request)
+	resp, merged, err := wfs.createContentEntry(context.Background(), fh, request, baseSnapshot, true, &contentPublication{})
 	if err != nil {
 		return err
+	}
+	if merged != nil {
+		fh.rebaseEntry(merged, requestEntry)
+		baseSnapshot = merged
 	}
 
 	event := resp.GetMetadataEvent()
@@ -191,7 +197,7 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 			event.TsNs = ackVersionTsNs(resp)
 		}
 	}
-	fh.setAuthoritativeBase(baseSnapshot)
+	fh.setAuthoritativeBase(wfs.ackedBase(resp, baseSnapshot))
 	fh.advanceEntryVersion(ackVersionTsNs(resp), resp.GetLogSignature())
 	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
 		glog.Warningf("flushFileMetadata %s: best-effort metadata apply failed: %v", fileFullPath, applyErr)

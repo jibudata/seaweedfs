@@ -2,6 +2,7 @@ package page_writer
 
 import (
 	"fmt"
+	"io"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -83,6 +84,21 @@ func NewUploadPipeline(writers *util.LimitedConcurrentExecutor, chunkSize int64,
 }
 
 func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsNs int64) (n int, err error) {
+	for len(p) > 0 {
+		chunkEnd := (off/up.ChunkSize + 1) * up.ChunkSize
+		writeSize := min(int64(len(p)), chunkEnd-off)
+		written, writeErr := up.saveDataToOneChunk(p[:writeSize], off, isSequential, tsNs)
+		n += written
+		if writeErr != nil {
+			return n, writeErr
+		}
+		off += int64(written)
+		p = p[written:]
+	}
+	return n, nil
+}
+
+func (up *UploadPipeline) saveDataToOneChunk(p []byte, off int64, isSequential bool, tsNs int64) (n int, err error) {
 
 	up.chunksLock.Lock()
 	defer up.chunksLock.Unlock()
@@ -144,12 +160,15 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 			pageChunk = NewMemChunk(logicChunkIndex, up.ChunkSize)
 			// fmt.Printf(" create mem  chunk %d\n", logicChunkIndex)
 		} else {
-			pageChunk = up.swapFile.NewSwapFileChunk(logicChunkIndex)
+			// Check the *SwapFileChunk before it becomes a PageChunk: a nil
+			// pointer inside the interface would not compare equal to nil.
+			swapChunk := up.swapFile.NewSwapFileChunk(logicChunkIndex)
 			// fmt.Printf(" create file chunk %d\n", logicChunkIndex)
-			if pageChunk == nil {
+			if swapChunk == nil {
 				up.accountant.Release(up.ChunkSize)
 				return 0, fmt.Errorf("failed to create swap file chunk")
 			}
+			pageChunk = swapChunk
 		}
 		up.writableChunks[logicChunkIndex] = pageChunk
 	}
@@ -161,11 +180,25 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 	//}
 	n = pageChunk.WriteDataAt(p, off, tsNs)
 	up.maybeMoveToSealed(pageChunk, logicChunkIndex)
+	if n < len(p) {
+		err = fmt.Errorf("chunk %d stored %d of %d bytes: %w", logicChunkIndex, n, len(p), io.ErrShortWrite)
+	}
 
 	return
 }
 
 func (up *UploadPipeline) MaybeReadDataAt(p []byte, off int64, tsNs int64) (maxStop int64) {
+	for len(p) > 0 {
+		chunkEnd := (off/up.ChunkSize + 1) * up.ChunkSize
+		readSize := min(int64(len(p)), chunkEnd-off)
+		maxStop = max(maxStop, up.maybeReadDataFromOneChunk(p[:readSize], off, tsNs))
+		off += readSize
+		p = p[readSize:]
+	}
+	return maxStop
+}
+
+func (up *UploadPipeline) maybeReadDataFromOneChunk(p []byte, off int64, tsNs int64) (maxStop int64) {
 	logicChunkIndex := LogicChunkIndex(off / up.ChunkSize)
 
 	up.chunksLock.Lock()
@@ -196,6 +229,14 @@ func (up *UploadPipeline) MaybeReadDataAt(p []byte, off int64, tsNs int64) (maxS
 func (up *UploadPipeline) FlushAll() {
 	up.flushChunks()
 	up.waitForCurrentWritersToComplete()
+}
+
+// HasPendingUploads reports whether written data is still waiting to be
+// uploaded and attached.
+func (up *UploadPipeline) HasPendingUploads() bool {
+	up.chunksLock.Lock()
+	defer up.chunksLock.Unlock()
+	return len(up.writableChunks) > 0 || atomic.LoadInt32(&up.uploaderCount) > 0
 }
 
 func (up *UploadPipeline) flushChunks() {

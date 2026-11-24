@@ -2,6 +2,7 @@ package mount
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
@@ -54,20 +55,51 @@ func (i *FileHandleToInode) MarkInodeRenamed(inode uint64) {
 // existed. An existing handle only gets its counter bumped: its entry belongs
 // to whoever holds the handle lock, so callers install there (AcquireHandle)
 // rather than under this one.
-func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry, versionTsNs int64, signature int32) (*FileHandle, bool) {
+func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry, versionTsNs int64, signature int32, appendMode ...bool) (*FileHandle, bool) {
+	fh, _, existed := i.AcquireOpenFileHandle(wfs, inode, entry, versionTsNs, signature, len(appendMode) > 0 && appendMode[0])
+	return fh, existed
+}
+
+func (i *FileHandleToInode) AcquireOpenFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry, versionTsNs int64, signature int32, appendMode bool) (*FileHandle, FileHandleId, bool) {
+	// Bind before publishing the handle or queuing any async close. Capture
+	// under the inode-table lock, but release it before taking the fhMap lock.
+	var writebackError *atomic.Bool
+	if wfs.option.WritebackCache {
+		wfs.inodeToPath.RLock()
+		state, found := wfs.writebackContentErrors.Load(inode)
+		if !found {
+			state, _ = wfs.writebackContentErrors.LoadOrStore(inode, new(atomic.Bool))
+		}
+		writebackError = state.(*atomic.Bool)
+		wfs.inodeToPath.RUnlock()
+	}
 	i.Lock()
 	defer i.Unlock()
 	fh, found := i.inode2fh[inode]
 	if !found {
 		fh = newFileHandle(wfs, FileHandleId(util.RandomUint64()), inode, entry)
+		fh.writebackContentError = writebackError
+		fh.fhs[fh.fh] = appendMode
 		fh.entryVersionTsNs.Store(versionTsNs)
 		fh.entryVersionSignature.Store(signature)
 		i.inode2fh[inode] = fh
 		i.fh2inode[fh.fh] = inode
-		return fh, false
+		return fh, fh.fh, false
 	}
 	fh.counter++
-	return fh, true
+	openFh := FileHandleId(util.RandomUint64())
+	fh.fhs[openFh] = appendMode
+	i.fh2inode[openFh] = inode
+	return fh, openFh, true
+}
+
+func (i *FileHandleToInode) isAppendHandle(openFh FileHandleId) bool {
+	i.RLock()
+	defer i.RUnlock()
+	if fh := i.inode2fh[i.fh2inode[openFh]]; fh != nil {
+		return fh.fhs[openFh]
+	}
+	return false
 }
 
 func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) *FileHandle {
@@ -91,6 +123,10 @@ func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) *FileHandle {
 		return nil
 	}
 
+	delete(fhHandle.fhs, fh)
+	if fh != fhHandle.fh {
+		delete(i.fh2inode, fh)
+	}
 	fhHandle.counter--
 	if fhHandle.counter <= 0 {
 		if fhHandle.asyncFlushPending {
@@ -98,8 +134,15 @@ func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) *FileHandle {
 			// via FindFileHandle during the background drain.
 			return fhHandle
 		}
+		// Fence before a reopen can see the inode without this handle.
+		if fhHandle.dirtyContent && !fhHandle.isDeleted {
+			(&contentPublication{failure: fhHandle.writebackContentError}).abandon()
+		}
 		delete(i.inode2fh, inode)
 		delete(i.fh2inode, fhHandle.fh)
+		for openFh := range fhHandle.fhs {
+			delete(i.fh2inode, openFh)
+		}
 		return fhHandle
 	}
 	return nil
@@ -111,6 +154,12 @@ func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) *FileHandle {
 func (i *FileHandleToInode) RemoveFileHandle(fh FileHandleId, inode uint64) {
 	i.Lock()
 	defer i.Unlock()
+	if fhHandle, found := i.inode2fh[inode]; found {
+		for openFh := range fhHandle.fhs {
+			delete(i.fh2inode, openFh)
+		}
+		delete(i.fh2inode, fhHandle.fh)
+	}
 	delete(i.inode2fh, inode)
 	delete(i.fh2inode, fh)
 }

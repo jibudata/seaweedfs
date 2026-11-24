@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
@@ -28,7 +30,28 @@ func (wfs *WFS) doRename(ctx context.Context, request *filer_pb.StreamRenameEntr
 		glog.V(1).Infof("Rename %s => %s: stream failed, falling back to unary: %v", oldPath, newPath, err)
 	}
 	return wfs.WithFilerClient(true, func(client filer_pb.SeaweedFilerClient) error {
-		stream, streamErr := client.StreamRenameEntry(ctx, request)
+		// The stream is dedicated to this attempt, so cancelling its context
+		// abandons just this rename. Bound the silence between events the way
+		// the mutation mux does: a filer that accepts the stream then stalls
+		// must not hold the failover walk hostage, but a long rename that
+		// keeps sending events may take as long as it needs. Local event
+		// work is not wire silence — a directory rename can spend longer
+		// than the bound migrating a child's DLM lock — so the timer defers
+		// while the handler runs instead of cancelling a healthy stream.
+		streamCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		var inHandler atomic.Bool
+		var silence *time.Timer
+		silence = time.AfterFunc(wfs.filerRPCWait(), func() {
+			if inHandler.Load() {
+				silence.Reset(wfs.filerRPCWait())
+				return
+			}
+			cancel()
+		})
+		defer silence.Stop()
+
+		stream, streamErr := client.StreamRenameEntry(streamCtx, request)
 		if streamErr != nil {
 			return fmt.Errorf("dir AtomicRenameEntry %s => %s : %v", oldPath, newPath, streamErr)
 		}
@@ -38,11 +61,20 @@ func (wfs *WFS) doRename(ctx context.Context, request *filer_pb.StreamRenameEntr
 				if recvErr == io.EOF {
 					break
 				}
+				if ctx.Err() == nil && streamCtx.Err() != nil {
+					return fmt.Errorf("dir Rename %s => %s: no event for %s", oldPath, newPath, wfs.filerRPCWait())
+				}
 				return fmt.Errorf("dir Rename %s => %s receive: %v", oldPath, newPath, recvErr)
 			}
-			if err := wfs.handleRenameResponse(ctx, resp, newPath, newPathLock); err != nil {
+			inHandler.Store(true)
+			err := wfs.handleRenameResponse(ctx, resp, newPath, newPathLock)
+			inHandler.Store(false)
+			if err != nil {
 				return err
 			}
+			// The event just proved the filer alive; the bound covers the
+			// wait for the next one, not the whole rename.
+			silence.Reset(wfs.filerRPCWait())
 		}
 		return nil
 	})
@@ -348,8 +380,9 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		// BEFORE any async flush interference.
 		if fh, ok := wfs.fhMap.FindFileHandle(sourceInode); ok && fh.dirtyMetadata {
 			glog.V(4).Infof("dir Rename %s: flushing deferred metadata before rename", oldPath)
-			// Prerequisite for the rename, so it must complete: non-cancellable context.
-			if flushStatus := wfs.doFlush(context.Background(), fh, oldEntry.Attributes.Uid, oldEntry.Attributes.Gid, false); flushStatus != fuse.OK {
+			// Prerequisite for the rename, so it must complete: non-cancellable
+			// context and no commit deadline.
+			if flushStatus := wfs.doFlush(context.Background(), fh, oldEntry.Attributes.Uid, oldEntry.Attributes.Gid, false, 0); flushStatus != fuse.OK {
 				glog.Warningf("dir Rename %s: flush before rename failed: %v", oldPath, flushStatus)
 				return flushStatus
 			}
@@ -373,6 +406,7 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 	// makes it. Windows is where this bites: the close carrying the flush runs
 	// after the application's CloseHandle returned, so the flush can land on
 	// top of what the rename just put there.
+	var restoreTarget func()
 	if in.Flags == RenameEmptyFlag {
 		targetInode, targetMapped := wfs.inodeToPath.GetInode(newPath)
 		if !targetMapped && newEntry != nil && newEntry.Attributes != nil {
@@ -387,13 +421,7 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 			// of the restore below.
 			wfs.waitForPendingAsyncFlush(targetInode)
 			epoch := wfs.markHandleDeleted(targetInode)
-			// A rename that does not happen leaves the destination where it
-			// was, so its handle has to go back to writing that name.
-			defer func() {
-				if code != fuse.OK {
-					wfs.clearHandleDeleted(targetInode, epoch)
-				}
-			}()
+			restoreTarget = func() { wfs.clearHandleDeleted(targetInode, epoch) }
 		}
 	}
 
@@ -406,8 +434,22 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		Signatures:   []int32{wfs.signature},
 	}
 
-	ctx := context.Background()
-	err := wfs.doRename(ctx, request, oldPath, newPath, &newPathLock)
+	// This mount's own flushes and attribute changes of either name wait for
+	// the rename: written while the filer moves the entry, one of the two
+	// fails (TiKV refuses the later commit). The locks cover the local move
+	// too, so a waiter then publishes under the name the rename left. Taken
+	// after the drains above, which wait for flushes that take them.
+	err := func() error {
+		defer wfs.lockRenamePublication(oldPath, newPath)()
+		err := wfs.doRename(context.Background(), request, oldPath, newPath, &newPathLock)
+		if err != nil && restoreTarget != nil {
+			// A rename that does not happen leaves the destination where it
+			// was, so its handle has to go back to writing that name, before
+			// a flush that waited for the rename looks at it.
+			restoreTarget()
+		}
+		return err
+	}()
 	if err != nil {
 		glog.V(0).Infof("Rename %s => %s: %v", oldPath, newPath, err)
 		// Map error strings to FUSE status codes. String matching is used
@@ -437,6 +479,25 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 
 	return fuse.OK
 
+}
+
+// lockRenamePublication takes the publication locks of both names in path
+// order, so two renames between the same names cannot deadlock, and returns
+// the func that releases them.
+func (wfs *WFS) lockRenamePublication(oldPath, newPath util.FullPath) func() {
+	first, second := oldPath, newPath
+	if second < first {
+		first, second = second, first
+	}
+	unlockFirst := wfs.lockMetadataPublication(first)
+	if second == first {
+		return unlockFirst
+	}
+	unlockSecond := wfs.lockMetadataPublication(second)
+	return func() {
+		unlockSecond()
+		unlockFirst()
+	}
 }
 
 func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamRenameEntryResponse, renameNewPath util.FullPath, renameNewPathLock **cluster.LiveLock) error {

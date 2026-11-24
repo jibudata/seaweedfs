@@ -135,6 +135,8 @@ type Option struct {
 }
 
 type WFS struct {
+	// Metadata-only refusal token, detached at final Forget; no live resources retained.
+	writebackContentErrors sync.Map
 	// https://dl.acm.org/doi/fullHtml/10.1145/3310148
 	// follow https://github.com/hanwen/go-fuse/blob/master/fuse/api.go
 	fuse.RawFileSystem
@@ -147,6 +149,7 @@ type WFS struct {
 	manifestCache         *filer.ChunkManifestCache
 	writeBufferAccountant *page_writer.WriteBufferAccountant
 	signature             int32
+	filerCallTimeout      time.Duration // bounds one filer call; tests only, 0 = filerRPCTimeout
 	concurrentWriters     *util.LimitedConcurrentExecutor
 	copyBufferPool        sync.Pool
 	concurrentCopiersSem  chan struct{}
@@ -155,31 +158,35 @@ type WFS struct {
 	dhMap                 *DirectoryHandleToInode
 	fuseServer            *fuse.Server
 	IsOverQuota           bool
-	fhLockTable           *util.LockTable[FileHandleId]
-	hardLinkLockTable     *util.LockTable[string]
-	posixLocks            *PosixLockTable
-	posixSid              uint64             // this mount's session id, for routed-lock owner identity
-	posixHint             *posixLockHint     // local fcntl-lock hint for routed mode
-	posixOwn              *posixlock.Manager // mirror of locks this mount holds, re-asserted via keepalive
-	peerRegistrar         *PeerRegistrar
-	peerDirectory         *PeerDirectory
-	peerGrpcServer        *PeerGrpcServer
-	peerAnnouncer         *PeerAnnouncer
-	peerConnPool          *PeerConnPool
-	peerDirectoryStop     chan struct{} // closed on unmount to stop the sweeper goroutine
-	FilerConf             *filer.FilerConf
-	filerClient           *wdclient.FilerClient // Cached volume location client
-	refreshMu             sync.Mutex
-	refreshingDirs        map[util.FullPath]struct{}
-	atimeMu               sync.Mutex
-	atimeMap              map[uint64]time.Time // inode -> atime, in-memory only, bounded
-	dirMtimeMu            sync.Mutex
-	dirMtimeMap           map[uint64]time.Time // inode -> mtime/ctime, in-memory overlay for dirs
-	removedDirMu          sync.Mutex
-	removedDirs           map[uint64]*filer_pb.Entry // inode -> last-known entry of a directory removed while still referenced
-	entryValidSec         uint64                     // kernel FUSE entry cache TTL in seconds
-	attrValidSec          uint64                     // kernel FUSE attr cache TTL in seconds
-	dirIdleEvict          time.Duration
+	// Handle lock nesting order is defined at FileHandle.entryLock.
+	fhLockTable       *util.LockTable[FileHandleId]
+	hardLinkLockTable *util.LockTable[string]
+	posixLocks        *PosixLockTable
+	posixSid          uint64             // this mount's session id, for routed-lock owner identity
+	posixHint         *posixLockHint     // local fcntl-lock hint for routed mode
+	posixOwn          *posixlock.Manager // mirror of locks this mount holds, re-asserted via keepalive
+	peerRegistrar     *PeerRegistrar
+	peerDirectory     *PeerDirectory
+	peerGrpcServer    *PeerGrpcServer
+	peerAnnouncer     *PeerAnnouncer
+	peerConnPool      *PeerConnPool
+	peerDirectoryStop chan struct{} // closed on unmount to stop the sweeper goroutine
+	FilerConf         *filer.FilerConf
+	filerClient       *wdclient.FilerClient // Cached volume location client
+	refreshMu         sync.Mutex
+	refreshingDirs    map[util.FullPath]struct{}
+	atimeMu           sync.Mutex
+	atimeMap          map[uint64]time.Time // inode -> atime, in-memory only, bounded
+	dirMtimeMu        sync.Mutex
+	dirMtimeMap       map[uint64]time.Time // inode -> mtime/ctime, in-memory overlay for dirs
+	removedDirMu      sync.Mutex
+	removedDirs       map[uint64]*filer_pb.Entry // inode -> last-known entry of a directory removed while still referenced
+	entryValidSec     uint64                     // kernel FUSE entry cache TTL in seconds
+	attrValidSec      uint64                     // kernel FUSE attr cache TTL in seconds
+	dirIdleEvict      time.Duration
+
+	metadataPublicationOnce  sync.Once
+	metadataPublicationLocks *util.LockTable[util.FullPath]
 
 	// openMtimeCache maps inode -> [mtime_sec, mtime_ns] from the last Open.
 	// Used to decide whether to set FOPEN_KEEP_CACHE on subsequent opens.
@@ -469,6 +476,10 @@ func (wfs *WFS) StartBackgroundTasks() error {
 		glog.V(0).Infof("writebackCache enabled: async flush on close() for improved small file performance")
 	}
 
+	if wfs.lockClient != nil {
+		wfs.followLockRing()
+	}
+
 	follower, err := wfs.subscribeFilerConfEvents()
 	if err != nil {
 		return err
@@ -674,8 +685,8 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, entryVersion,
 	var entry *filer_pb.Entry
 	var lookupVersion entryVersion
 	lookupDir, lookupName := fullpath.DirAndName()
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, lookupErr := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
+	err := wfs.withFilerClient(context.Background(), false, wfs.filerRPCWait(), func(ctx context.Context, client filer_pb.SeaweedFilerClient) error {
+		resp, lookupErr := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 			Directory: lookupDir,
 			Name:      lookupName,
 		})
@@ -909,6 +920,8 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 	handled = true
 	fhActiveLock := wfs.fhLockTable.AcquireLock("invalidateFunc", fh.fh, util.ExclusiveLock)
 	defer wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+	fh.entryLock.Lock()
+	defer fh.entryLock.Unlock()
 
 	// A rename changes which name the inode answers to, not which version of
 	// its content the handle holds, so it is applied ahead of the version fence
@@ -992,18 +1005,24 @@ func (wfs *WFS) invalidateOpenFileHandle(invalidation meta_cache.EntryInvalidati
 		fh.advanceEntryVersion(candidateTsNs, 0)
 		return
 	}
+	// A dirty handle replays its own changes onto the peer's entry, keeping
+	// its pages. An unmergeable change or a replaced file keeps the writes;
+	// the flush reports the conflict.
+	if fh.dirtyMetadata && base != nil {
+		if sameContentFile(candidate, base) && fh.mergePeerContent(candidate, base) {
+			fh.adoptPeerBase(proto.Clone(candidate).(*filer_pb.Entry))
+			fh.advanceEntryVersion(candidateTsNs, 0)
+		}
+		return
+	}
 	// Dirty pages overlay content, so only a content change invalidates them:
 	// a metadata-only event (chmod, touch, or a committed copy's own event
-	// against an approximate base) leaves them valid. A dirty handle likewise
-	// keeps its diverged entry unless foreign content supersedes it.
-	contentChanged := base == nil || !sameEntryContent(candidate, base)
-	if contentChanged {
+	// against an approximate base) leaves them valid.
+	if base == nil || !sameEntryContent(candidate, base) {
 		fh.dirtyPages.Destroy()
 		fh.dirtyPages = newPageWriter(fh, wfs.option.ChunkSizeLimit)
 	}
-	if contentChanged || !fh.dirtyMetadata {
-		fh.SetEntry(candidate)
-	}
+	fh.SetEntry(candidate)
 	fh.baseEntry.Store(proto.Clone(candidate).(*filer_pb.Entry))
 	fh.advanceEntryVersion(candidateTsNs, 0)
 	return
