@@ -63,8 +63,32 @@ func (pages *ChunkedDirtyPages) AddPage(offset int64, data []byte, isSequential 
 	}
 	pages.hasWrites = true
 
+	chunkSize := pages.uploadPipeline.ChunkSize
 	glog.V(4).Infof("%v memory AddPage [%d, %d)", pages.fh.fh, offset, offset+int64(len(data)))
-	return pages.uploadPipeline.SaveDataAt(data, offset, isSequential, tsNs)
+	var total int64
+	// Split at logical-chunk boundaries: a FUSE write may span the end of
+	// one chunk and the start of the next (the kernel coalesces dirty pages
+	// at page granularity).  SaveDataAt writes within a single chunk only;
+	// relying on kernel short-write retry loses the crossing remainder when
+	// the caller-side handling acks short (lab finding F2, 2026-11-21).
+	for len(data) > 0 {
+		inner := offset % chunkSize
+		n := int64(len(data))
+		if rem := chunkSize - inner; n > rem {
+			n = rem
+		}
+		w, err := pages.uploadPipeline.SaveDataAt(data[:n], offset, isSequential, tsNs)
+		if err != nil {
+			return int(total + int64(w)), err
+		}
+		if w != int(n) {
+			return int(total + int64(w)), nil
+		}
+		total += int64(w)
+		data = data[n:]
+		offset += n
+	}
+	return int(total), nil
 }
 
 func (pages *ChunkedDirtyPages) HasWrites() bool {
@@ -151,6 +175,7 @@ func (pages *ChunkedDirtyPages) saveChunkedFileIntervalToStorage(reader io.Reade
 		glog.V(3).Infof("%v saveToStorage %s [%d,%d): pages discarded, chunk not attached", fileFullPath, chunk.FileId, offset, offset+size)
 		return
 	}
+	glog.V(0).Infof("UPLOG fh=%v offset=%d size=%d fileId=%s", fileFullPath, chunk.Offset, chunk.Size, chunk.FileId)
 	pages.fh.AddChunks([]*filer_pb.FileChunk{chunk})
 	pages.fh.entryChunkGroup.AddChunk(chunk)
 	glog.V(3).Infof("%v saveToStorage %s [%d,%d)", fileFullPath, chunk.FileId, offset, offset+size)

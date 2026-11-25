@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"slices"
 	"bytes"
 	"context"
 	"errors"
@@ -556,6 +557,19 @@ func foldSmallChunks(saveFunc SaveDataAsChunkFunctionType, inputChunks []*filer_
 	if len(smallChunks) < SmallChunkManifestBatch {
 		return inputChunks, nil
 	}
+	// Fold batches must be offset-contiguous: batching in list order
+	// (upload-completion order) mixes far-apart chunks into one manifest
+	// whose declared span is the min..max of the batch - a span many times
+	// the sub-chunks' actual coverage.  Random-overwrite workloads exposed
+	// this (lab finding F1/F2): resolution of such manifests left most of
+	// the span unexplained and views collapsed.  Sort by offset so every
+	// batch covers one contiguous range.
+	slices.SortFunc(smallChunks, func(a, b *filer_pb.FileChunk) int {
+		if a.Offset != b.Offset {
+			return int(a.Offset - b.Offset)
+		}
+		return int(a.ModifiedTsNs - b.ModifiedTsNs)
+	})
 	folded, err := doMaybeManifestize(saveFunc, smallChunks, SmallChunkManifestBatch, mergeIntoManifest)
 	if err != nil {
 		return inputChunks, err
@@ -574,6 +588,14 @@ func doMaybeManifestize(saveFunc SaveDataAsChunkFunctionType, inputChunks []*fil
 		}
 	}
 
+	// See the offset-contiguity note in foldSmallChunks: sort before
+	// batching so each manifest's declared span matches its sub-chunks.
+	slices.SortFunc(dataChunks, func(a, b *filer_pb.FileChunk) int {
+		if a.Offset != b.Offset {
+			return int(a.Offset - b.Offset)
+		}
+		return int(a.ModifiedTsNs - b.ModifiedTsNs)
+	})
 	remaining := len(dataChunks)
 	for i := 0; i+mergeFactor <= len(dataChunks); i += mergeFactor {
 		chunk, err := mergefn(saveFunc, dataChunks[i:i+mergeFactor])
@@ -621,6 +643,15 @@ func mergeIntoManifest(saveFunc SaveDataAsChunkFunctionType, dataChunks []*filer
 	manifestChunk.IsChunkManifest = true
 	manifestChunk.Offset = minOffset
 	manifestChunk.Size = uint64(maxOffset - minOffset)
+	// Stamp the manifest with the newest sub-chunk timestamp.  saveFunc was
+	// called with tsNs=0, and a zero-ts chunk sorts below every real write
+	// in the visible-interval view; overlays written after the fold then
+	// shadow the whole manifest span in views that trust ts ordering.
+	for _, c := range dataChunks {
+		if c.ModifiedTsNs > manifestChunk.ModifiedTsNs {
+			manifestChunk.ModifiedTsNs = c.ModifiedTsNs
+		}
+	}
 
 	return
 }

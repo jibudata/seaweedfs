@@ -155,9 +155,14 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 
 	// Try to create manifest chunks for large files
 	// no chunk deleter here: a failed fold reports the blobs it saved
-	compactedChunks, manifestErr := filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), nil, compactedChunks)
-	if manifestErr != nil {
-		glog.V(0).Infof("flushFileMetadata MaybeManifestize: %v", manifestErr)
+	if wfs.option.SkipManifestize {
+		glog.V(1).Infof("%s skip manifestize (SkipManifestize)", fileFullPath)
+	} else {
+		var manifestErr error
+		compactedChunks, manifestErr = filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), nil, compactedChunks)
+		if manifestErr != nil {
+			glog.V(0).Infof("flushFileMetadata MaybeManifestize: %v", manifestErr)
+		}
 	}
 
 	processedPrefix := append(compactedChunks, manifestChunks...)
@@ -178,6 +183,10 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 		e.Chunks = append(processedPrefix, tail...)
 		requestEntry = proto.Clone(e).(*filer_pb.Entry)
 	})
+	// The merge may have folded chunks into manifests: re-resolve them into
+	// the read view (finding F2 - without this, manifest-covered ranges read
+	// as zeros on this handle).
+	fh.rebuildReadView()
 	request := &filer_pb.CreateEntryRequest{
 		Directory:                string(dir),
 		Entry:                    requestEntry,

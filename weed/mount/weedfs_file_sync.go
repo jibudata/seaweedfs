@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"syscall"
 	"time"
 
@@ -267,6 +268,24 @@ func flushErrorToFuseStatus(err error) fuse.Status {
 	return grpcErrorToFuseStatus(err)
 }
 
+// logChunkStage is a temporary F2-investigation instrument: logs the chunk
+// count/total/span at each flush-stage boundary so the stage that drops
+// coverage can be identified (lab soak finding F2, 2026-11-20).
+func logChunkStage(stage string, fileFullPath util.FullPath, chunks []*filer_pb.FileChunk) {
+	var total, minOff, maxOff int64
+	for _, c := range chunks {
+		total += int64(c.Size)
+		if minOff < 0 || int64(c.Offset) < minOff {
+			minOff = int64(c.Offset)
+		}
+		if e := int64(c.Offset) + int64(c.Size); e > maxOff {
+			maxOff = e
+		}
+	}
+	glog.V(0).Infof("F2DIAG stage=%s file=%s chunks=%d totalBytes=%d span=[%d,%d)",
+		stage, fileFullPath, len(chunks), total, minOff, maxOff)
+}
+
 // flushMetadataToFiler sends the file's chunk references and attributes to the filer.
 // This is shared between the synchronous doFlush path and the async flush completion.
 //
@@ -332,11 +351,13 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 
 	snapshot := entry.GetChunks()
 	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(snapshot)
+	logChunkStage("input", fileFullPath, snapshot)
 
 	chunks, _, err := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
 	if err != nil {
 		return fmt.Errorf("compact chunks of %s: %w", fileFullPath, err)
 	}
+	logChunkStage("after-compact", fileFullPath, chunks)
 
 	deferMerge := false
 	if _, _, bloated := shouldMergeChunks(chunks, manifestChunks); bloated {
@@ -363,6 +384,10 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	}
 
 	rewrote := false
+	// The chunks a merge replaced: they leave the filer entry together with
+	// the new list, and must leave the volume server with it.  See
+	// deleteMergedChunks for why the filer's own diff is not enough.
+	var replacedByMerge []*filer_pb.FileChunk
 	if deferMerge {
 		glog.V(3).Infof("%s: uploads pending, leaving the chunk merge to a later flush", fileFullPath)
 	} else if mergedChunks, mergeErr := wfs.maybeMergeChunks(fileFullPath, chunks, manifestChunks); mergeErr != nil {
@@ -373,13 +398,20 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 		fh.noteRewrite()
 		rewrote = true
 	}
+	logChunkStage("after-merge", fileFullPath, chunks)
 
 	// no chunk deleter here: a failed fold reports the blobs it saved
-	chunks, manifestErr := filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), nil, chunks)
-	if manifestErr != nil {
-		// not good, but should be ok
-		glog.V(0).Infof("MaybeManifestize: %v", manifestErr)
+	if wfs.option.SkipManifestize {
+		glog.V(1).Infof("%s skip manifestize (SkipManifestize)", fileFullPath)
+	} else {
+		var manifestErr error
+		chunks, manifestErr = filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), nil, chunks)
+		if manifestErr != nil {
+			// not good, but should be ok
+			glog.V(0).Infof("MaybeManifestize: %v", manifestErr)
+		}
 	}
+	logChunkStage("after-manifestize", fileFullPath, chunks)
 	if rewrote {
 		fh.installRewrittenChunks(snapshot, append(chunks, manifestChunks...))
 	} else {
@@ -387,6 +419,20 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 			e.Chunks = withChunksAttachedSince(snapshot, append(chunks, manifestChunks...), e.Chunks)
 		})
 	}
+	logChunkStage("final-entry", fileFullPath, fh.GetEntry().GetChunks())
+	if rewrote {
+		replacedByMerge = replacedChunks(snapshot, fh.GetEntry().GetChunks())
+	}
+
+	// Rebuild the handle's read view from the new chunk list.  Manifestize
+	// may have folded data chunks into manifest chunks; the view must resolve
+	// them (SetChunks) or their ranges read as zero-fills on this handle even
+	// though the filer serves the data correctly (lab finding F2: silent
+	// zero holes after fsync because the read view kept only the
+	// pre-manifestize data chunks).  SetChunks resolves manifest chunks via
+	// the mount's manifest cache; a resolution failure surfaces as EIO on
+	// subsequent reads instead of silent zeros.
+	fh.rebuildReadView()
 
 	// Clone the proto entry for the filer request so that mapPbIdFromLocalToFiler
 	// does not mutate the file handle's live entry. Without the clone, a concurrent
@@ -418,6 +464,15 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	if err != nil {
 		glog.Errorf("fh flush create %s: %v", fileFullPath, err)
 		return &contentPublicationError{cause: fmt.Errorf("fh flush create %s: %w", fileFullPath, err), request: proto.Clone(request).(*filer_pb.CreateEntryRequest)}
+	}
+	// The merge's new chunk list is committed: the chunks it replaced are
+	// referenced by nobody now, and a needle nobody references stays live
+	// on the volume server forever.  Delete them there, so compaction and
+	// vacuum can reclaim the space.
+	// A hard-linked file is left alone: another name may still read the
+	// chunks this one replaced.
+	if len(replacedByMerge) > 0 && len(fh.GetEntry().GetHardLinkId()) == 0 {
+		wfs.deleteMergedChunks(ctx, fileFullPath, replacedByMerge, fh.GetEntry().GetChunks())
 	}
 	if merged != nil {
 		fh.rebaseEntry(merged, requestEntry)
@@ -751,6 +806,13 @@ func shouldMergeChunks(compactedChunks []*filer_pb.FileChunk, manifestChunks []*
 	return
 }
 
+// mergeReadIsComplete reports whether a merge read exactly the file's bytes.
+// A merge that reads less would replace the chunk list with a rewrite that
+// does not cover the whole file, so it must be refused.
+func mergeReadIsComplete(offset int64, fileSize uint64) bool {
+	return uint64(offset) == fileSize
+}
+
 // maybeMergeChunks re-reads and re-uploads file data as properly sized chunks
 // when the total stored chunk data significantly exceeds the logical file size,
 // which happens after many random writes create partially-overlapping small chunks.
@@ -760,13 +822,30 @@ func (wfs *WFS) maybeMergeChunks(fileFullPath util.FullPath, compactedChunks []*
 		return nil, nil
 	}
 
-	glog.V(0).Infof("%.1fx chunk bloat detected on %s (%d chunks, %d stored vs %d content), merging",
-		float64(totalChunkSize)/float64(fileSize), fileFullPath, len(compactedChunks), totalChunkSize, fileSize)
-
 	ctx := context.Background()
 	allChunks := make([]*filer_pb.FileChunk, 0, len(compactedChunks)+len(manifestChunks))
 	allChunks = append(allChunks, compactedChunks...)
 	allChunks = append(allChunks, manifestChunks...)
+	if len(manifestChunks) > 0 {
+		// A manifest's Size is its bounding-box span (maxOffset - minOffset),
+		// which for sparse small-chunk manifests (foldSmallChunks) can vastly
+		// exceed the physical bytes stored by its sub-chunks. Resolve the
+		// manifests and re-check the merge condition against the actual
+		// sub-chunk sizes before re-uploading the whole file.
+		resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, wfs.LookupFn(), allChunks, 0, math.MaxInt64, nil)
+		if err != nil {
+			return nil, err
+		}
+		totalChunkSize, fileSize, merge = shouldMergeChunks(resolvedChunks, nil)
+		if !merge {
+			return nil, nil
+		}
+		allChunks = resolvedChunks
+	}
+
+	glog.V(0).Infof("%.1fx chunk bloat detected on %s (%d chunks, %d stored vs %d content), merging",
+		float64(totalChunkSize)/float64(fileSize), fileFullPath, len(allChunks), totalChunkSize, fileSize)
+
 	reader := filer.NewChunkStreamReaderFromLookup(ctx, wfs.LookupFn(), allChunks)
 	defer reader.Close()
 
@@ -796,6 +875,10 @@ func (wfs *WFS) maybeMergeChunks(fileFullPath util.FullPath, compactedChunks []*
 			}
 			return nil, readErr
 		}
+	}
+
+	if !mergeReadIsComplete(offset, fileSize) {
+		return nil, fmt.Errorf("incomplete chunk merge on %s: read %d bytes, expected %d", fileFullPath, offset, fileSize)
 	}
 
 	glog.V(0).Infof("merged %s: %d chunks -> %d chunks", fileFullPath, len(compactedChunks)+len(manifestChunks), len(newChunks))

@@ -1050,6 +1050,33 @@ func validateUpdateEntryPreconditions(entry *filer.Entry, expectedExtended map[s
 	return nil
 }
 
+
+// logChunkStageSrv is a lab instrument (finding F2): logs the declared
+// coverage of the existing and incoming entries plus the garbage count at
+// each server-side cleanup stage, so the stage that drops coverage is
+// identifiable from the filer log.
+func logChunkStageSrv(stage string, fullpath string, existingEntry *filer.Entry, newEntry *filer_pb.Entry, garbage []*filer_pb.FileChunk) {
+	sum := func(chunks []*filer_pb.FileChunk) (int64, int64) {
+		var total, maxEnd int64
+		for _, c := range chunks {
+			total += int64(c.Size)
+			if e := int64(c.Offset) + int64(c.Size); e > maxEnd {
+				maxEnd = e
+			}
+		}
+		return total, maxEnd
+	}
+	var existTotal, existEnd int64
+	existN := 0
+	if existingEntry != nil {
+		existTotal, existEnd = sum(existingEntry.GetChunks())
+		existN = len(existingEntry.GetChunks())
+	}
+	newTotal, newEnd := sum(newEntry.GetChunks())
+	glog.V(0).Infof("F2DIAGSRV stage=%s file=%s exist=[n=%d bytes=%d end=%d] new=[n=%d bytes=%d end=%d] garbage=%d",
+		stage, fullpath, existN, existTotal, existEnd, len(newEntry.GetChunks()), newTotal, newEnd, len(garbage))
+}
+
 func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, existingEntry *filer.Entry, newEntry *filer_pb.Entry) (chunks, garbage []*filer_pb.FileChunk, err error) {
 
 	// remove old chunks if not included in the new ones
@@ -1059,6 +1086,7 @@ func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, exist
 			return newEntry.GetChunks(), nil, fmt.Errorf("MinusChunks: %w", err)
 		}
 	}
+	logChunkStageSrv("minus", fullpath, existingEntry, newEntry, garbage)
 
 	// files with manifest chunks are usually large and append only, skip calculating covered chunks
 	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(newEntry.GetChunks())
@@ -1068,6 +1096,7 @@ func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, exist
 		return newEntry.GetChunks(), nil, fmt.Errorf("CompactFileChunks: %w", err)
 	}
 	garbage = append(garbage, coveredChunks...)
+	logChunkStageSrv("compact", fullpath, existingEntry, newEntry, garbage)
 
 	if newEntry.Attributes != nil {
 		so, _ := fs.detectStorageOption(ctx, fullpath,

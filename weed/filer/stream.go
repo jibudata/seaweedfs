@@ -382,6 +382,8 @@ func writeZero(w io.Writer, size int64) (err error) {
 const maxBufferedChunks = 16
 const maxBufferedChunkBytes = 128 << 20
 
+var zeroChunkBuffer = make([]byte, 1<<20)
+
 type bufferedChunk struct {
 	offset int64
 	data   []byte
@@ -423,7 +425,9 @@ func doNewChunkStreamReader(ctx context.Context, lookupFileIdFn wdclient.LookupF
 	var totalSize int64
 	for x := chunkViews.Front(); x != nil; x = x.Next {
 		chunk := x.Value
-		totalSize += int64(chunk.ViewSize)
+		if end := chunk.ViewOffset + int64(chunk.ViewSize); end > totalSize {
+			totalSize = end
+		}
 	}
 
 	return &ChunkStreamReader{
@@ -517,31 +521,44 @@ func (c *ChunkStreamReader) prepareBufferFor(offset int64) (err error) {
 	if c.head == nil && c.sourceErr != nil {
 		return c.sourceErr
 	}
-	// stay in the same chunk
-	if c.bufferOffset <= offset && offset < c.bufferOffset+int64(len(c.buffer)) {
+	if offset < 0 || offset >= c.totalSize {
+		return io.EOF
+	}
+	// stay in the same chunk or zero-fill buffer
+	if len(c.buffer) > 0 && c.bufferOffset <= offset && offset < c.bufferOffset+int64(len(c.buffer)) {
 		return nil
 	}
 	// glog.V(2).Infof("c.chunkView: %v buffer:[%d,%d) offset:%d totalSize:%d", c.chunkView, c.bufferOffset, c.bufferOffset+int64(len(c.buffer)), offset, c.totalSize)
 
-	// find a possible chunk view
+	// Locate the first chunk view whose end exceeds offset.
 	p := c.chunkView
-	for p != nil {
-		chunk := p.Value
-		// glog.V(2).Infof("prepareBufferFor check chunk:[%d,%d)", chunk.ViewOffset, chunk.ViewOffset+int64(chunk.ViewSize))
-		if insideChunk(offset, chunk) {
-			if c.isBufferEmpty() || c.bufferOffset != chunk.ViewOffset {
-				c.chunkView = p
-				return c.fetchChunkToBuffer(chunk)
-			}
-		}
-		if offset < c.bufferOffset {
-			p = p.Prev
-		} else {
-			p = p.Next
-		}
+	if p == nil {
+		p = c.head
+	}
+	for p != nil && p.Prev != nil && p.Value.ViewOffset > offset {
+		p = p.Prev
+	}
+	for p != nil && p.Value.ViewOffset+int64(p.Value.ViewSize) <= offset {
+		p = p.Next
+	}
+	if p == nil {
+		return io.EOF
 	}
 
-	return io.EOF
+	c.chunkView = p
+	chunk := p.Value
+	if offset < chunk.ViewOffset {
+		gap := chunk.ViewOffset - offset
+		if gap > int64(len(zeroChunkBuffer)) {
+			gap = int64(len(zeroChunkBuffer))
+		}
+		c.buffer = zeroChunkBuffer[:gap]
+		c.bufferOffset = offset
+		c.chunk = ""
+		return nil
+	}
+
+	return c.fetchChunkToBuffer(chunk)
 }
 
 func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {

@@ -18,7 +18,7 @@ import (
 
 type FileHandleId uint64
 
-var IsDebugFileReadWrite = false
+var IsDebugFileReadWrite = os.Getenv("WEED_MOUNT_DEBUG_MIRROR") == "true"
 
 type FileHandle struct {
 	fh      FileHandleId
@@ -118,6 +118,7 @@ func newFileHandle(wfs *WFS, handleId FileHandleId, inode uint64, entry *filer_p
 	}
 
 	if IsDebugFileReadWrite {
+		_ = os.MkdirAll("/tmp/sw", 0700)
 		var err error
 		fh.mirrorFile, err = os.OpenFile("/tmp/sw/"+entry.Name, os.O_RDWR|os.O_CREATE, 0600)
 		if err != nil {
@@ -217,6 +218,21 @@ func (fh *FileHandle) installAckedEntry(entry *filer_pb.Entry, versionTsNs int64
 // rebaseEntry installs an entry merged with a peer's changes, keeping the
 // chunks and growth writers added after sent was taken, and refreshes the
 // read view.
+// rebuildReadView re-resolves the handle's chunk group from the entry's
+// current chunk list.  Any path that replaces entry.Chunks (sync flush,
+// async flush, server-merge rebase) MUST call this: manifest chunks in the
+// new list have to be resolved into the view, otherwise their ranges read
+// as zero-fills on this handle while the filer serves the data correctly
+// (lab finding F2, 2026-11-20/21).
+func (fh *FileHandle) rebuildReadView() {
+	if fh.entryChunkGroup == nil {
+		return
+	}
+	if err := fh.entryChunkGroup.SetChunks(fh.GetEntry().GetChunks()); err != nil {
+		glog.Errorf("rebuild read view for %s: %v", fh.FullPath(), err)
+	}
+}
+
 func (fh *FileHandle) rebaseEntry(merged, sent *filer_pb.Entry) {
 	inSent := make(map[string]bool, len(sent.Chunks))
 	for _, c := range sent.Chunks {
