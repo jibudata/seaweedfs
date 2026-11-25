@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
+	"math"
 	"syscall"
 	"time"
 
@@ -760,15 +760,41 @@ func (wfs *WFS) maybeMergeChunks(fileFullPath util.FullPath, compactedChunks []*
 		return nil, nil
 	}
 
-	glog.V(0).Infof("%.1fx chunk bloat detected on %s (%d chunks, %d stored vs %d content), merging",
-		float64(totalChunkSize)/float64(fileSize), fileFullPath, len(compactedChunks), totalChunkSize, fileSize)
-
 	ctx := context.Background()
 	allChunks := make([]*filer_pb.FileChunk, 0, len(compactedChunks)+len(manifestChunks))
 	allChunks = append(allChunks, compactedChunks...)
 	allChunks = append(allChunks, manifestChunks...)
+	if len(manifestChunks) > 0 {
+		// A manifest's Size is its bounding-box span (maxOffset - minOffset),
+		// which for sparse small-chunk manifests (foldSmallChunks) can vastly
+		// exceed the physical bytes stored by its sub-chunks. Resolve the
+		// manifests and re-check the merge condition against the actual
+		// sub-chunk sizes before re-uploading the whole file.
+		resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, wfs.LookupFn(), allChunks, 0, math.MaxInt64, nil)
+		if err != nil {
+			return nil, err
+		}
+		totalChunkSize, fileSize, merge = shouldMergeChunks(resolvedChunks, nil)
+		if !merge {
+			return nil, nil
+		}
+		allChunks = resolvedChunks
+	}
+
+	glog.V(0).Infof("%.1fx chunk bloat detected on %s (%d chunks, %d stored vs %d content), merging",
+		float64(totalChunkSize)/float64(fileSize), fileFullPath, len(allChunks), totalChunkSize, fileSize)
+
 	reader := filer.NewChunkStreamReaderFromLookup(ctx, wfs.LookupFn(), allChunks)
 	defer reader.Close()
+
+	list, err := filer.NonOverlappingVisibleIntervals(ctx, wfs.LookupFn(), allChunks, 0, int64(fileSize))
+	if err != nil {
+		return nil, err
+	}
+	var visibles []*filer.Interval[*filer.VisibleInterval]
+	for x := list.Front(); x != nil; x = x.Next {
+		visibles = append(visibles, x)
+	}
 
 	saveFunc := wfs.saveDataAsChunk(fileFullPath)
 	chunkSize := wfs.option.ChunkSizeLimit
@@ -776,26 +802,33 @@ func (wfs *WFS) maybeMergeChunks(fileFullPath util.FullPath, compactedChunks []*
 		chunkSize = int64(fileSize)
 	}
 
+	// Read each contiguous run of visible data on its own and leave sparse
+	// holes between runs unwritten.
 	var newChunks []*filer_pb.FileChunk
-	var offset int64
+	var lastEnd int64
 	buf := make([]byte, chunkSize)
-
-	for {
-		n, readErr := io.ReadFull(reader, buf)
-		if n > 0 {
+	for i := 0; i < len(visibles); {
+		start, stop := visibles[i].StartOffset, visibles[i].StopOffset
+		for i++; i < len(visibles) && visibles[i].StartOffset == stop; i++ {
+			stop = visibles[i].StopOffset
+		}
+		for offset := start; offset < stop; {
+			n := int(min(int64(len(buf)), stop-offset))
+			if _, readErr := reader.ReadAt(buf[:n], offset); readErr != nil {
+				return nil, fmt.Errorf("read [%d,%d): %w", offset, offset+int64(n), readErr)
+			}
 			chunk, uploadErr := saveFunc(bytes.NewReader(buf[:n]), "", offset, 0, uint64(n))
 			if uploadErr != nil {
 				return nil, uploadErr
 			}
 			newChunks = append(newChunks, chunk)
 			offset += int64(n)
+			lastEnd = offset
 		}
-		if readErr != nil {
-			if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
-				break
-			}
-			return nil, readErr
-		}
+	}
+
+	if uint64(lastEnd) != fileSize {
+		return nil, fmt.Errorf("incomplete chunk merge on %s: last merged offset %d, expected %d", fileFullPath, lastEnd, fileSize)
 	}
 
 	glog.V(0).Infof("merged %s: %d chunks -> %d chunks", fileFullPath, len(compactedChunks)+len(manifestChunks), len(newChunks))

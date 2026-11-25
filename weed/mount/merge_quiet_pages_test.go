@@ -544,3 +544,149 @@ func TestFlushMergeRacesWithWritesAndReads(t *testing.T) {
 		t.Fatal("the filer's entry does not hold what was written")
 	}
 }
+
+// Regression test for sparse random-write truncation in maybeMergeChunks:
+//  1. When a genuinely bloated sparse file (totalChunkSize > 2 * fileSize) has
+//     an unwritten sparse hole between written regions, maybeMergeChunks must
+//     zero-fill the sparse hole and preserve all data after the hole instead
+//     of hitting early io.EOF at the hole and truncating the file.
+//  2. When small-chunk manifests (foldSmallChunks) have large bounding-box
+//     spans (maxOffset - minOffset) across a sparse file, maybeMergeChunks must
+//     check the resolved sub-chunks' actual stored bytes rather than falsely
+//     triggering a whole-file merge.
+func TestFlushMergePreservesSparseFileWithHoles(t *testing.T) {
+	t.Run("BloatedSparseFileWithGapAfterOffsetZero", func(t *testing.T) {
+		// Staggered overlapping 128-byte chunks in [0, 224) (total stored there = 512)
+		// followed by a sparse hole [224, 320) and a tail chunk at [320, 384).
+		// Total stored = 512 + 64 = 576 > 2 * 384 (768? wait: add two more staggered
+		// chunks in [0, 256) so stored = 6 * 128 + 64 = 832 > 2 * 384 = 768).
+		const fileSize = 384
+		payload := func(seed uint32, size int) []byte {
+			b := make([]byte, size)
+			x := seed * 2654435761
+			for i := range b {
+				x = x*1103515245 + 12345
+				b[i] = byte(x >> 16)
+			}
+			return b
+		}
+		want := make([]byte, fileSize)
+		vol := &proxyVolume{stored: map[string][]byte{}}
+		var chunks []*filer_pb.FileChunk
+		for i := 0; i < 6; i++ {
+			off := int64(i * 16)
+			data := payload(uint32(i+1), 128)
+			c := &filer_pb.FileChunk{
+				Fid:          &filer_pb.FileId{VolumeId: 1, FileKey: uint64(i + 1), Cookie: 1},
+				Offset:       off,
+				Size:         128,
+				ModifiedTsNs: int64(i + 1),
+			}
+			vol.stored[c.GetFileIdString()] = data
+			chunks = append(chunks, c)
+			copy(want[off:], data)
+		}
+		// Sparse hole at [208, 320), then tail chunk at [320, 384).
+		tailData := payload(99, 64)
+		tailChunk := &filer_pb.FileChunk{
+			Fid:          &filer_pb.FileId{VolumeId: 1, FileKey: 99, Cookie: 1},
+			Offset:       320,
+			Size:         64,
+			ModifiedTsNs: 99,
+		}
+		vol.stored[tailChunk.GetFileIdString()] = tailData
+		chunks = append(chunks, tailChunk)
+		copy(want[320:], tailData)
+
+		base := &filer_pb.Entry{
+			Name: "file",
+			Attributes: &filer_pb.FuseAttributes{
+				Inode: 42, Uid: 2000, Gid: 20, FileMode: 0644, FileSize: fileSize, Mtime: 10,
+			},
+			Chunks:     chunks,
+			CommitTsNs: 100,
+		}
+
+		w, fh, _ := openProxyHandle(t, vol, base, vol)
+		lock := w.fhLockTable.AcquireLock("test flush", fh.fh, util.ExclusiveLock)
+		fh.dirtyMetadata = true
+		w.fhLockTable.ReleaseLock(fh.fh, lock)
+		if err := w.flushMetadataToFiler(context.Background(), fh, "/dir", "file", 0, 0, nil, &contentPublication{writes: fh.pageWrites.Load()}); err != nil {
+			t.Fatalf("flush: %v", err)
+		}
+
+		_, merges := vol.counts()
+		if merges != 1 {
+			t.Fatalf("expected 1 merge on bloated sparse file, got %d", merges)
+		}
+		entry, committed := vol.committed(t)
+		if !bytes.Equal(committed, want) {
+			t.Fatalf("merged sparse file lost data after hole: got len=%d tail=%q, want tail=%q",
+				len(committed), committed[320:], want[320:])
+		}
+		for _, c := range entry.Chunks {
+			if c.Offset < 320 && c.Offset+int64(c.Size) > 208 {
+				t.Errorf("merged chunk [%d,%d) writes into the sparse hole [208,320)", c.Offset, c.Offset+int64(c.Size))
+			}
+		}
+		if got := readView(t, fh, fileSize); !bytes.Equal(got, want) {
+			t.Fatalf("open handle read view mismatch after sparse merge")
+		}
+	})
+
+	t.Run("SparseManifestBoundingBoxDoesNotFalseTriggerMerge", func(t *testing.T) {
+		// Two sparse manifests each span [0, 1000) (so manifest.Size == 1000 each,
+		// bounding-box sum = 2000 + 64 regular chunk = 2064 > 2 * 1000),
+		// but each manifest only holds two 64-byte sub-chunks (actual stored = 320 <= 2000).
+		const fileSize = 1000
+		vol := &proxyVolume{stored: map[string][]byte{}}
+
+		sub1 := &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 1, Cookie: 1}, Offset: 0, Size: 64, ModifiedTsNs: 1}
+		sub2 := &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 2, Cookie: 1}, Offset: 936, Size: 64, ModifiedTsNs: 2}
+		sub3 := &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 3, Cookie: 1}, Offset: 128, Size: 64, ModifiedTsNs: 3}
+		sub4 := &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 4, Cookie: 1}, Offset: 800, Size: 64, ModifiedTsNs: 4}
+		reg5 := &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: 5, Cookie: 1}, Offset: 400, Size: 64, ModifiedTsNs: 5}
+		for i, c := range []*filer_pb.FileChunk{sub1, sub2, sub3, sub4, reg5} {
+			vol.stored[c.GetFileIdString()] = bytes.Repeat([]byte{byte('1' + i)}, 64)
+		}
+
+		makeManifest := func(key uint64, subs []*filer_pb.FileChunk, ts int64) *filer_pb.FileChunk {
+			filer_pb.BeforeEntrySerialization(subs)
+			data, err := proto.Marshal(&filer_pb.FileChunkManifest{Chunks: subs})
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := &filer_pb.FileChunk{
+				Fid:             &filer_pb.FileId{VolumeId: 9, FileKey: key, Cookie: 1},
+				Offset:          0,
+				Size:            fileSize,
+				ModifiedTsNs:    ts,
+				IsChunkManifest: true,
+			}
+			vol.stored[m.GetFileIdString()] = data
+			return m
+		}
+		m1 := makeManifest(101, []*filer_pb.FileChunk{sub1, sub2}, 10)
+		m2 := makeManifest(102, []*filer_pb.FileChunk{sub3, sub4}, 20)
+
+		base := &filer_pb.Entry{
+			Name: "file",
+			Attributes: &filer_pb.FuseAttributes{
+				Inode: 42, Uid: 2000, Gid: 20, FileMode: 0644, FileSize: fileSize, Mtime: 10,
+			},
+			Chunks:     []*filer_pb.FileChunk{m1, m2, reg5},
+			CommitTsNs: 100,
+		}
+
+		w, fh, _ := openProxyHandle(t, vol, base, vol)
+		merged, err := w.maybeMergeChunks("/dir/file", []*filer_pb.FileChunk{reg5}, []*filer_pb.FileChunk{m1, m2})
+		if err != nil {
+			t.Fatalf("maybeMergeChunks: %v", err)
+		}
+		if merged != nil {
+			t.Fatalf("sparse manifests with 320 actual stored bytes across 1000-byte file should not merge, got %d merged chunks", len(merged))
+		}
+		_ = fh
+	})
+}
+
