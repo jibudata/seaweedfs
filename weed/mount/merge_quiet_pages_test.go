@@ -561,12 +561,21 @@ func TestFlushMergePreservesSparseFileWithHoles(t *testing.T) {
 		// Total stored = 512 + 64 = 576 > 2 * 384 (768? wait: add two more staggered
 		// chunks in [0, 256) so stored = 6 * 128 + 64 = 832 > 2 * 384 = 768).
 		const fileSize = 384
+		payload := func(seed uint32, size int) []byte {
+			b := make([]byte, size)
+			x := seed * 2654435761
+			for i := range b {
+				x = x*1103515245 + 12345
+				b[i] = byte(x >> 16)
+			}
+			return b
+		}
 		want := make([]byte, fileSize)
 		vol := &proxyVolume{stored: map[string][]byte{}}
 		var chunks []*filer_pb.FileChunk
 		for i := 0; i < 6; i++ {
 			off := int64(i * 16)
-			data := bytes.Repeat([]byte{byte('A' + i)}, 128)
+			data := payload(uint32(i+1), 128)
 			c := &filer_pb.FileChunk{
 				Fid:          &filer_pb.FileId{VolumeId: 1, FileKey: uint64(i + 1), Cookie: 1},
 				Offset:       off,
@@ -578,7 +587,7 @@ func TestFlushMergePreservesSparseFileWithHoles(t *testing.T) {
 			copy(want[off:], data)
 		}
 		// Sparse hole at [208, 320), then tail chunk at [320, 384).
-		tailData := bytes.Repeat([]byte{'Z'}, 64)
+		tailData := payload(99, 64)
 		tailChunk := &filer_pb.FileChunk{
 			Fid:          &filer_pb.FileId{VolumeId: 1, FileKey: 99, Cookie: 1},
 			Offset:       320,
@@ -610,10 +619,15 @@ func TestFlushMergePreservesSparseFileWithHoles(t *testing.T) {
 		if merges != 1 {
 			t.Fatalf("expected 1 merge on bloated sparse file, got %d", merges)
 		}
-		_, committed := vol.committed(t)
+		entry, committed := vol.committed(t)
 		if !bytes.Equal(committed, want) {
 			t.Fatalf("merged sparse file lost data after hole: got len=%d tail=%q, want tail=%q",
 				len(committed), committed[320:], want[320:])
+		}
+		for _, c := range entry.Chunks {
+			if c.Offset < 320 && c.Offset+int64(c.Size) > 208 {
+				t.Errorf("merged chunk [%d,%d) writes into the sparse hole [208,320)", c.Offset, c.Offset+int64(c.Size))
+			}
 		}
 		if got := readView(t, fh, fileSize); !bytes.Equal(got, want) {
 			t.Fatalf("open handle read view mismatch after sparse merge")
