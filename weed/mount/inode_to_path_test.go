@@ -270,3 +270,83 @@ func TestAllocateInodeReturnsFirstFreeNumber(t *testing.T) {
 		t.Fatalf("AllocateInode = a%+d, want a+3", int64(got-a))
 	}
 }
+
+func TestForgottenLiveInodeRecoverableForNfsExport(t *testing.T) {
+	itp := NewInodeToPath(util.FullPath("/"), 60)
+	dirPath := util.FullPath("/export/integrity")
+	filePath := util.FullPath("/export/integrity/file.dat")
+
+	dirInode := itp.Lookup(dirPath, 100, true, false, 0, true)
+	fileInode := itp.Lookup(filePath, 100, false, false, 777, true)
+
+	// Simulate kernel icache eviction (drop_caches=2/3) issuing FUSE_FORGET.
+	itp.Forget(fileInode, 1, nil, nil)
+	itp.Forget(dirInode, 1, nil, nil)
+
+	// Active kernel reference table drops them (HasInode == false), but
+	// GetPath and InodeForListing still resolve them for NFS export recovery.
+	if itp.HasInode(fileInode) || itp.HasInode(dirInode) {
+		t.Fatal("forgotten inodes must not report as active kernel-referenced inodes")
+	}
+	if gotPath, status := itp.GetPath(dirInode); status != fuse.OK || gotPath != dirPath {
+		t.Fatalf("GetPath(dirInode) after Forget = %q, %v; want %q, OK", gotPath, status, dirPath)
+	}
+	if gotPath, status := itp.GetPath(fileInode); status != fuse.OK || gotPath != filePath {
+		t.Fatalf("GetPath(fileInode) after Forget = %q, %v; want %q, OK", gotPath, status, filePath)
+	}
+	if gotIno := itp.InodeForListing(dirPath, 200, 0); gotIno != dirInode {
+		t.Fatalf("InodeForListing(dirPath) after Forget = %d, want %d", gotIno, dirInode)
+	}
+	if relookupIno := itp.Lookup(dirPath, 200, true, false, 0, true); relookupIno != dirInode {
+		t.Fatalf("re-Lookup(dirPath) after Forget = %d, want %d", relookupIno, dirInode)
+	}
+
+	// Removing a forgotten path purges it from the forgotten history so stale
+	// handles return ENOENT.
+	itp.RemovePath(filePath, nil)
+	if _, status := itp.GetPath(fileInode); status != fuse.ENOENT {
+		t.Fatalf("GetPath(removed forgotten fileInode) = %v, want ENOENT", status)
+	}
+}
+
+func TestLookupDotAndDotDotAfterForget(t *testing.T) {
+	wfs := newLookupCacheTestWFS(t, 60)
+	startFakeFiler(t, wfs, &lookupCacheTestFiler{})
+	exportPath := util.FullPath("/export")
+	integrityPath := util.FullPath("/export/integrity")
+
+	exportInode := wfs.inodeToPath.Lookup(exportPath, 100, true, false, 501, true)
+	integrityInode := wfs.inodeToPath.Lookup(integrityPath, 100, true, false, 502, true)
+
+	// Simulate kernel icache eviction (drop_caches=2/3) forgetting both directories.
+	wfs.Forget(integrityInode, 1)
+	wfs.Forget(exportInode, 1)
+
+	// 1. fuse_get_dentry sends FUSE_LOOKUP(integrityInode, ".") to recover the evicted inode.
+	var dotOut fuse.EntryOut
+	if status := wfs.Lookup(nil, &fuse.InHeader{NodeId: integrityInode}, ".", &dotOut); status != fuse.OK {
+		t.Fatalf("Lookup(integrityInode, \".\") after Forget = %v, want OK", status)
+	}
+	if dotOut.NodeId != integrityInode {
+		t.Fatalf("Lookup(integrityInode, \".\") NodeId = %d, want %d", dotOut.NodeId, integrityInode)
+	}
+
+	// 2. fuse_get_parent sends FUSE_LOOKUP(integrityInode, "..") to find /export.
+	var parentOut fuse.EntryOut
+	if status := wfs.Lookup(nil, &fuse.InHeader{NodeId: integrityInode}, "..", &parentOut); status != fuse.OK {
+		t.Fatalf("Lookup(integrityInode, \"..\") = %v, want OK", status)
+	}
+	if parentOut.NodeId != exportInode {
+		t.Fatalf("Lookup(integrityInode, \"..\") NodeId = %d, want %d", parentOut.NodeId, exportInode)
+	}
+
+	// 3. fuse_get_parent sends FUSE_LOOKUP(exportInode, "..") to reach mount root "/" (NodeId=1, Generation=0).
+	var rootOut fuse.EntryOut
+	if status := wfs.Lookup(nil, &fuse.InHeader{NodeId: exportInode}, "..", &rootOut); status != fuse.OK {
+		t.Fatalf("Lookup(exportInode, \"..\") = %v, want OK", status)
+	}
+	if rootOut.NodeId != 1 || rootOut.Generation != 0 {
+		t.Fatalf("Lookup(exportInode, \"..\") = (NodeId=%d, Generation=%d), want (1, 0)", rootOut.NodeId, rootOut.Generation)
+	}
+}
+
