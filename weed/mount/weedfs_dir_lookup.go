@@ -1,6 +1,8 @@
 package mount
 
 import (
+	"syscall"
+
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -22,7 +24,15 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 
 	dirPath, code := wfs.inodeToPath.GetPath(header.NodeId)
 	if code != fuse.OK {
+		if name == "." || name == ".." {
+			return fuse.Status(syscall.ESTALE)
+		}
 		return
+	}
+
+	mountRoot := util.FullPath(wfs.option.FilerMountRootPath)
+	if mountRoot == "" {
+		mountRoot = "/"
 	}
 
 	var fullFilePath util.FullPath
@@ -30,18 +40,22 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	case ".":
 		fullFilePath = dirPath
 	case "..":
-		parentDir, _ := dirPath.DirAndName()
-		fullFilePath = util.FullPath(parentDir)
+		if dirPath == mountRoot || dirPath == "/" {
+			fullFilePath = mountRoot
+		} else {
+			parentDir, _ := dirPath.DirAndName()
+			fullFilePath = util.FullPath(parentDir)
+		}
 	default:
 		fullFilePath = dirPath.Child(name)
 	}
 
-	if fullFilePath == "/" {
+	if fullFilePath == "/" || fullFilePath == mountRoot {
 		wfs.inodeToPath.IncrementNlookup(1)
 		var attrOut fuse.AttrOut
 		wfs.setRootAttr(&attrOut)
 		if wfs.option.PosixDirNlink {
-			wfs.applyDirNlink(&attrOut.Attr, util.FullPath(wfs.option.FilerMountRootPath))
+			wfs.applyDirNlink(&attrOut.Attr, mountRoot)
 		}
 		out.NodeId = 1
 		out.Generation = 0
@@ -56,7 +70,14 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	defer cancelFunc()
 	localEntry, _, status := wfs.lookupEntry(ctx, fullFilePath)
 	if status != fuse.OK {
+		if status == fuse.ENOENT && name == "." {
+			return fuse.Status(syscall.ESTALE)
+		}
 		return status
+	}
+
+	if name == "." && localEntry.Inode != 0 && localEntry.Inode != header.NodeId {
+		return fuse.Status(syscall.ESTALE)
 	}
 
 	possibleInode := localEntry.Inode
@@ -87,4 +108,3 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	return fuse.OK
 
 }
-
