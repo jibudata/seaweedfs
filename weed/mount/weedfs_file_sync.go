@@ -384,6 +384,10 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	}
 
 	rewrote := false
+	// The chunks a merge replaced: they leave the filer entry together with
+	// the new list, and must leave the volume server with it.  See
+	// deleteMergedChunks for why the filer's own diff is not enough.
+	var replacedByMerge []*filer_pb.FileChunk
 	if deferMerge {
 		glog.V(3).Infof("%s: uploads pending, leaving the chunk merge to a later flush", fileFullPath)
 	} else if mergedChunks, mergeErr := wfs.maybeMergeChunks(fileFullPath, chunks, manifestChunks); mergeErr != nil {
@@ -416,6 +420,9 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 		})
 	}
 	logChunkStage("final-entry", fileFullPath, fh.GetEntry().GetChunks())
+	if rewrote {
+		replacedByMerge = replacedChunks(snapshot, fh.GetEntry().GetChunks())
+	}
 
 	// Rebuild the handle's read view from the new chunk list.  Manifestize
 	// may have folded data chunks into manifest chunks; the view must resolve
@@ -457,6 +464,15 @@ func (wfs *WFS) flushMetadataToFiler(ctx context.Context, fh *FileHandle, dir, n
 	if err != nil {
 		glog.Errorf("fh flush create %s: %v", fileFullPath, err)
 		return &contentPublicationError{cause: fmt.Errorf("fh flush create %s: %w", fileFullPath, err), request: proto.Clone(request).(*filer_pb.CreateEntryRequest)}
+	}
+	// The merge's new chunk list is committed: the chunks it replaced are
+	// referenced by nobody now, and a needle nobody references stays live
+	// on the volume server forever.  Delete them there, so compaction and
+	// vacuum can reclaim the space.
+	// A hard-linked file is left alone: another name may still read the
+	// chunks this one replaced.
+	if len(replacedByMerge) > 0 && len(fh.GetEntry().GetHardLinkId()) == 0 {
+		wfs.deleteMergedChunks(ctx, fileFullPath, replacedByMerge, fh.GetEntry().GetChunks())
 	}
 	if merged != nil {
 		fh.rebaseEntry(merged, requestEntry)
