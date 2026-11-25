@@ -37,7 +37,14 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
+// SkipManifestize disables folding data chunks into manifest chunks at
+// flush time.  The 2026-11-20/21 lab soak (finding F1/F2) traced silent
+// data loss to the manifestize interaction; entries with a few hundred
+// chunks are well within the filer metadata store's capacity, so keeping
+// the list flat is safe for mounts that opt in.
 type Option struct {
+	// SkipManifestize: keep the entry chunk list flat (see comment above).
+	SkipManifestize             bool
 	filerIndex                  int32 // align memory for atomic read/write
 	FilerAddresses              []pb.ServerAddress
 	MountDirectory              string
@@ -242,6 +249,10 @@ type WFS struct {
 const defaultDirIdleEvict = 10 * time.Minute
 
 func NewSeaweedFileSystem(option *Option) *WFS {
+	if os.Getenv("WEED_MOUNT_SKIP_MANIFESTIZE") == "true" {
+		option.SkipManifestize = true
+		glog.V(0).Infof("WEED_MOUNT_SKIP_MANIFESTIZE=true: flush keeps the chunk list flat")
+	}
 	// Only create FilerClient for direct volume access modes
 	// When VolumeServerAccess == "filerProxy", all reads go through filer, so no volume lookup needed
 	var filerClient *wdclient.FilerClient

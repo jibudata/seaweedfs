@@ -74,6 +74,7 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 	// which ignores the count.
 	offset := int64(in.Offset)
 	buffered, err := fh.dirtyPages.AddPage(offset, data, fh.dirtyPages.writerPattern.IsSequentialMode(), tsNs)
+	glog.V(0).Infof("ADDLOG fh=%v offset=%d len=%d buffered=%d err=%v", fh.FullPath(), offset, len(data), buffered, err)
 	if err != nil {
 		glog.Errorf("AddPage error: %v", err)
 		if buffered == 0 {

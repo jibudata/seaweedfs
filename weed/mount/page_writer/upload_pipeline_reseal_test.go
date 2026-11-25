@@ -47,8 +47,8 @@ func TestMoveToSealed_ReplaceKeepsUploadReference(t *testing.T) {
 	first, second := newGatedChunk(), newGatedChunk()
 
 	up.chunksLock.Lock()
-	up.moveToSealed(first, 0)
-	up.moveToSealed(second, 0) // takes over index 0 while first is uploading
+	up.moveToSealed(first, 0, "test")
+	up.moveToSealed(second, 0, "test") // takes over index 0 while first is uploading
 	up.chunksLock.Unlock()
 
 	// both seals are done, so any premature free has already happened
@@ -88,7 +88,7 @@ func TestShutdown_LeavesInFlightUploadItsReference(t *testing.T) {
 
 	chunk := newGatedChunk()
 	up.chunksLock.Lock()
-	up.moveToSealed(chunk, 0)
+	up.moveToSealed(chunk, 0, "test")
 	up.chunksLock.Unlock()
 
 	up.Shutdown()

@@ -135,7 +135,7 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 				}
 			}
 			if candidateChunkIndex >= 0 {
-				up.moveToSealed(up.writableChunks[candidateChunkIndex], candidateChunkIndex)
+				up.moveToSealed(up.writableChunks[candidateChunkIndex], candidateChunkIndex, "pressure-strict")
 			}
 		}
 		// fmt.Printf("isSequential:%v len(up.writableChunks):%v memChunkCounter:%v", isSequential, len(up.writableChunks), memChunkCounter)
@@ -164,7 +164,7 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 	//	println("found active read chunk", logicChunkIndex)
 	//}
 	n = pageChunk.WriteDataAt(p, off, tsNs)
-	up.maybeMoveToSealed(pageChunk, logicChunkIndex)
+	up.maybeMoveToSealed(pageChunk, logicChunkIndex, "write-complete")
 	if n < len(p) {
 		err = fmt.Errorf("chunk %d stored %d of %d bytes: %w", logicChunkIndex, n, len(p), io.ErrShortWrite)
 	}
@@ -218,17 +218,18 @@ func (up *UploadPipeline) flushChunks() {
 	defer up.chunksLock.Unlock()
 
 	for logicChunkIndex, memChunk := range up.writableChunks {
-		up.moveToSealed(memChunk, logicChunkIndex)
+		up.moveToSealed(memChunk, logicChunkIndex, "FlushAll")
 	}
 }
 
-func (up *UploadPipeline) maybeMoveToSealed(memChunk PageChunk, logicChunkIndex LogicChunkIndex) {
+func (up *UploadPipeline) maybeMoveToSealed(memChunk PageChunk, logicChunkIndex LogicChunkIndex, trigger string) {
 	if memChunk.IsComplete() {
-		up.moveToSealed(memChunk, logicChunkIndex)
+		up.moveToSealed(memChunk, logicChunkIndex, trigger)
 	}
 }
 
-func (up *UploadPipeline) moveToSealed(memChunk PageChunk, logicChunkIndex LogicChunkIndex) {
+func (up *UploadPipeline) moveToSealed(memChunk PageChunk, logicChunkIndex LogicChunkIndex, trigger string) {
+	glog.V(0).Infof("SEALLOG %s chunk=%d writerCountBefore=%d", trigger, logicChunkIndex, atomic.LoadInt32(&up.uploaderCount))
 	newCount := atomic.AddInt32(&up.uploaderCount, 1)
 	glog.V(4).Infof("%s uploaderCount %d ++> %d", up.filepath, newCount-1, newCount)
 
@@ -330,7 +331,7 @@ func (up *UploadPipeline) EvictOneWritableChunk() bool {
 	if bestIndex < 0 {
 		return false
 	}
-	up.moveToSealed(up.writableChunks[bestIndex], bestIndex)
+	up.moveToSealed(up.writableChunks[bestIndex], bestIndex, "evict-fallback")
 	return true
 }
 
@@ -390,7 +391,7 @@ func (up *UploadPipeline) ProactiveFlush(nowNs int64, idleThresholdNs int64, max
 		return false
 	}
 	glog.V(3).Infof("%s proactive flush chunk %d (%d bytes written)", up.filepath, bestIdx, bestBytes)
-	up.moveToSealed(up.writableChunks[bestIdx], bestIdx)
+	up.moveToSealed(up.writableChunks[bestIdx], bestIdx, "proactive-flush")
 	return true
 }
 
