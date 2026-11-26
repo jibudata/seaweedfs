@@ -71,11 +71,11 @@ func (p *proxyVolume) CreateEntry(ctx context.Context, r *filer_pb.CreateEntryRe
 		inBefore[c.GetFileIdString()] = true
 	}
 	kept := make(map[string]bool, len(r.GetEntry().GetChunks()))
-	merged := false
+	// maybeMergeChunks replaces every chunk the entry named.
+	merged := len(before) > 0
 	for _, c := range r.GetEntry().GetChunks() {
 		kept[c.GetFileIdString()] = true
-		// maybeMergeChunks stamps the chunks it writes 0.
-		merged = merged || c.GetModifiedTsNs() == 0 && !inBefore[c.GetFileIdString()]
+		merged = merged && !inBefore[c.GetFileIdString()]
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -273,8 +273,8 @@ func TestFlushMergeThroughChunkProxy(t *testing.T) {
 		flush(t, w, fh, &contentPublication{writes: fh.pageWrites.Load()})
 
 		entry, committed := vol.committed(t)
-		if len(entry.Chunks) != 1 || entry.Chunks[0].ModifiedTsNs != 0 {
-			t.Fatalf("the quiet flush did not merge: %v", entry.Chunks)
+		if len(entry.Chunks) != 1 || entry.Chunks[0].ModifiedTsNs != a.ModifiedTsNs {
+			t.Fatalf("the quiet flush did not merge into one chunk stamped as the oldest data it holds: %v", entry.Chunks)
 		}
 		vol.mu.Lock()
 		blobs := len(vol.stored)
@@ -288,8 +288,8 @@ func TestFlushMergeThroughChunkProxy(t *testing.T) {
 	})
 
 	// An older page is still uploading when a newer page of the same bytes
-	// has attached. A merge would read the newer page, and the older one,
-	// attaching after it, would outrank the merged chunks, which are stamped 0.
+	// has attached. The flush leaves the merge to a later one, and the older
+	// page, attaching last, must not outrank the newer one.
 	t.Run("UploadInFlight", func(t *testing.T) {
 		vol := newVolume()
 		var hold atomic.Bool
@@ -590,6 +590,38 @@ func TestFlushMergeKeepsDataPastAHole(t *testing.T) {
 	for _, c := range entry.Chunks {
 		if c.Offset < 512 && c.Offset+int64(c.Size) > 300 {
 			t.Errorf("merged chunk [%d,%d) writes into the hole [300,512)", c.Offset, c.Offset+int64(c.Size))
+		}
+	}
+}
+
+// A merged chunk yields to a write newer than any byte it holds, as a peer's
+// pending write over bytes the merge did not change must still show.
+func TestOldestVisibleTsNs(t *testing.T) {
+	chunk := func(key uint64, offset, size, ts int64) *filer_pb.FileChunk {
+		return &filer_pb.FileChunk{Fid: &filer_pb.FileId{VolumeId: 1, FileKey: key, Cookie: 1}, Offset: offset, Size: uint64(size), ModifiedTsNs: ts}
+	}
+	list, err := filer.NonOverlappingVisibleIntervals(context.Background(), nil, []*filer_pb.FileChunk{chunk(1, 0, 8, 1), chunk(2, 4, 4, 5), chunk(3, 12, 4, 3)}, 0, 16)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var visibles []*filer.Interval[*filer.VisibleInterval]
+	for x := list.Front(); x != nil; x = x.Next {
+		visibles = append(visibles, x)
+	}
+	for _, tt := range []struct {
+		start, stop, want int64
+	}{
+		{0, 8, 1},
+		{4, 8, 5},
+		{6, 7, 5},
+		{12, 16, 3},
+		{13, 15, 3},
+		{8, 12, 0},
+		{4, 16, 0},
+		{0, 16, 0},
+	} {
+		if got := oldestVisibleTsNs(visibles, tt.start, tt.stop); got != tt.want {
+			t.Errorf("[%d,%d): %d, want %d", tt.start, tt.stop, got, tt.want)
 		}
 	}
 }
